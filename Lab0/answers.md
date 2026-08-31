@@ -65,4 +65,40 @@ Vulnerabilities:
 
 ```bash
 tar xvf ~cs475/provided/Labs/Lab0-Mandelbrot-starter.tar
+blowfish:~/cs475/Lab0$ OMP_NUM_THREADS=4 ./bin/Mandelbrot.check-par
+The total number of errors is 0
 ```
+
+## Stage 2: What is Speedup
+
+// informational stage without a deliverable
+
+S(p) = T(baseline) / T(p)
+
+speed gained from prarallization = fully serial / num of runtime threads
+
+note: speed( parallel program ran with 1 thread != serial program) 
+
+## Stage 3: Run the Sweep
+
+```bash
+./bin/sweep.sh -pmin 1 -pmax 36 -r 5 -o default_range.csv
+./bin/make_excel.sh default_range.csv default_range.xlsx
+```
+
+![Speedup vs. Thread Count](default_range_chart.png)
+
+## Stage 4: Run the Sweep on a Different Viewing Window
+
+```bash
+./bin/sweep.sh -pmin 1 -pmax 36 -r 5 -o alt_range.csv -a -0.8 -b -0.7 -c 0.05 -d 0.15
+./bin/make_excel.sh alt_range.csv alt_range.xlsx
+```
+
+![Speedup vs. Thread Count](alt_range_chart.png)
+
+## Stage 5
+
+1. Why isn't the scatterplot smooth?
+2. Why is the scatterplot from stage 4 smoother than the one from Stage 3?
+3. Why would a parallel program ran with a single thread sometimes run faster than its fully serial counterpart?
