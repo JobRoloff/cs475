@@ -44,14 +44,32 @@ static int mandel_point(double cr, double ci, int max_iter) {
 void MandelbrotCompute(int *img, int width, int height, int max_iter,
                         double real_min, double real_max,
                         double imag_min, double imag_max) {
+    int row_counts[height]; 
 #if defined(PAR) && !defined(GOLD)
 #pragma omp parallel for 
 #endif
     for (int i = 0; i < height; i++) {
+        int sum_of_escape_iteraciton_counts = 0;
         for (int j = 0; j < width; j++) {
             double cr = real_min + j * (real_max - real_min) / (width - 1);
             double ci = imag_min + i * (imag_max - imag_min) / (height - 1);
-            img[i * width + j] = mandel_point(cr, ci, max_iter);
+            int point_value = mandel_point(cr, ci, max_iter);
+            img[i * width + j] = point_value;
+            sum_of_escape_iteraciton_counts += point_value;
         }
+        row_counts[i] = sum_of_escape_iteraciton_counts;
     }
+    // --- Begin Stage 2 Instrumentation ---
+        // Only export the profile when running sequentially (!defined(PAR) and !defined(GOLD))
+    #if !defined(PAR) && !defined(GOLD)
+        FILE *f = fopen("density_profile.csv", "w");
+        if (f != NULL) {
+            fprintf(f, "row_index,density\n");
+            for (int i = 0; i < height; i++) {
+                fprintf(f, "%d,%d\n", i, row_counts[i]);
+            }
+            fclose(f);
+            printf("Row-density profile written to density_profile.csv\n");
+        }
+    #endif
 }
