@@ -3,4 +3,5 @@ name = "parallel-programming"
 version = "0.1.0"
 dependencies = [
     "pandas>=2.3.3",
+    "pydantic>=2.13.5",
 ]

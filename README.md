@@ -16,4 +16,4 @@ note there's a standard way and a way with options
 
 ### Lab 1
 
-- 
+

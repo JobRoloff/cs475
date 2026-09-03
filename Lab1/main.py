@@ -24,7 +24,12 @@ def average_work_per_chunk():
 if __name__ == "__main__":
     df = pd.read_csv("density_profile.csv")
 
-    thread_counts = [3, 6, 8, 24]
+    # thread_counts = [3, 6, 8, 24]
+    thread_counts = []
+    for count in range(37):
+        if count == 0:
+            continue
+        thread_counts.append(count)
     
     # Store List[pd.DataFrame] for each thread count key
 
