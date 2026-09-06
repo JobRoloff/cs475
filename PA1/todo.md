@@ -17,4 +17,4 @@ This program will be used as follows:
 
 ## TODO
 
-[ ] Write analysis methods with non specific naming
+[ ] Step through code. Does passing in time into preformance_anazer.compute_metrics make sense for the task at hand?
