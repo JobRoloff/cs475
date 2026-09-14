@@ -11,10 +11,11 @@
 #
 # =============================================================
 
-CC := gcc
+CC := icx
 SRCDIR := src
 BUILDDIR := release
-LIBFLAGS := -lmkl_rt -lpthread -lm -ldl
+CFLAGS := -g -O2
+LIBFLAGS := -qmkl -static-intel
 
 all: $(BUILDDIR)/dgemm_example $(BUILDDIR)/dgemm_with_timing $(BUILDDIR)/matrix_multiplication $(BUILDDIR)/dgemm_threading_effect_example
 
@@ -23,7 +24,7 @@ $(BUILDDIR)/%: $(BUILDDIR)/%.o
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c
 	@mkdir -p $(BUILDDIR)
-	$(CC) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 run_dgemm_example: $(BUILDDIR)/dgemm_example
 	./$(BUILDDIR)/dgemm_example

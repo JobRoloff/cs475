@@ -1,1 +1,11 @@
 __pycache__
+.DS_Store
+
+# binaries
+# Lab3/matrix_multiplication/release/*
+
+*
+!//
+!*.*
+
+Lab3/matrix_multiplication/release/*

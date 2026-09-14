@@ -26,7 +26,7 @@
 
 /* Consider adjusting LOOP_COUNT based on the performance of your computer */
 /* to make sure that total run time is at least 1 second */
-#define LOOP_COUNT 10
+#define LOOP_COUNT 378
 
 int main()
 {
@@ -39,7 +39,7 @@ int main()
             " computing real matrix C=alpha*A*B+beta*C, where A, B, and C \n"
             " are matrices and alpha and beta are double precision scalars\n\n");
 
-    m = 2000, p = 2000, n = 2000;
+    m = 4000, p = 4000, n = 4000;
     printf (" Initializing data for matrix multiplication C=A*B for matrix \n"
             " A(%ix%i) and matrix B(%ix%i)\n\n", m, p, p, n);
     alpha = 1.0; beta = 0.0;
