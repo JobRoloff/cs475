@@ -1,11 +1,7 @@
 __pycache__
 .DS_Store
+.venv
 
-# binaries
-# Lab3/matrix_multiplication/release/*
-
-!//
-!*.*
 
 Lab3/matrix_multiplication/release/*
 Lab3/matrix_multiplication/config/*
@@ -15,3 +11,13 @@ Lab3/notes.md
 Lab3/answers.md
 
 lecture/date.md
+
+*.csv
+*.json
+*.xlsx
+
+
+*.check
+*.check-par
+*.time
+*.time-par

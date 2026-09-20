@@ -47,12 +47,31 @@
         (c)[bpm_k_] = bpm_f_;                                      \
     } while (0)
 
+
+/*
+ * Accumulate into an independent local accumulator.
+ *
+ * In the checking build, each accumulator has its own compensation
+ * value so that the optimized loop retains compensated summation.
+ */
+#define BPM_ACC_LOCAL(sum, comp, term)                             \
+    do {                                                           \
+        double bpm_prev_ = (double)(sum);                          \
+        double bpm_y_ = (double)(term) - (comp);                   \
+        double bpm_t_ = bpm_prev_ + bpm_y_;                        \
+        float  bpm_f_ = (float)bpm_t_;                             \
+        (comp) = ((double)bpm_f_ - bpm_prev_) - bpm_y_;             \
+        (sum) = bpm_f_;                                            \
+    } while (0)
+
 #else
 
 #define BPM_COMP_DECL(name, n)  ((void)0)
 #define BPM_COMP_FREE(name)     ((void)0)
 
 #define BPM_ACC(c, comp, k, term)  (c)[(k)] += (term);
+
+#define BPM_ACC_LOCAL(sum, comp, term)  (sum) += (term);
 
 #endif
 
