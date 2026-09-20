@@ -443,3 +443,11 @@ across acculator count 4, 6, 8, the serialization and reorder buffer are the gre
 ## question 4
 
 Build and test StudentPolyMult/EXQ where the loops are interchanged
+
+the EXQ approach is where we swap the inner and outer loop declarations
+
+as shown in the image of the initial exq, the single threaded approach performs at a GFLOPs of about 13
+
+## Question 5
+
+Parallelize EXQ to reach linear speedup
