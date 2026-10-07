@@ -22,7 +22,7 @@ void kernel_multiply(const float *restrict a, int dA,
 
     int output_length = dA + dB + 1;
 
-    #pragma omp parallel for schedule(dynamic, 16)
+    #pragma omp parallel for schedule(static, 4)
     for (int k = 0; k < output_length; k++) {
         BPM_COMP_DECL(comp, output_length);
 
@@ -38,6 +38,10 @@ void kernel_multiply(const float *restrict a, int dA,
             i_end = dA;
         }
 
+        /*
+         * Maintain multiple independent scalar accumulation chains
+         * to expose instruction-level parallelism to the compiler.
+         */
         float sum0 = 0.0f;
         float sum1 = 0.0f;
         float sum2 = 0.0f;
@@ -60,7 +64,12 @@ void kernel_multiply(const float *restrict a, int dA,
 
         /*
          * Process ACCUMULATORS independent accumulation chains.
+         *
+         * The unroll directive asks GCC to further unroll this loop,
+         * potentially exposing additional instruction-level parallelism
+         * to the optimizer.
          */
+        #pragma GCC unroll 16
         for (; i + ACCUMULATORS - 1 <= i_end;
              i += ACCUMULATORS) {
 
