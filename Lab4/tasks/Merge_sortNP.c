@@ -16,13 +16,6 @@ void mergesort(int a[], int temp[], int low, int high) {
     if (low < high) {
         mid = low + (high - low) / 2;
 
-        // the following cutoff check is what the lab is referring to as pruning
-        // Cutoff check to avoid task creation overhead for small arrays
-        // if (high - low < TASK_CUTOFF) {
-        //     mergesort(a, temp, low, mid);
-        //     mergesort(a, temp, mid + 1, high);
-        // } else {
-            // Task 1: Sort left half
         #pragma omp task firstprivate(a, temp, low, mid)
         mergesort(a, temp, low, mid);
 
@@ -32,7 +25,6 @@ void mergesort(int a[], int temp[], int low, int high) {
 
         // Wait for both subtasks to finish before merging
         #pragma omp taskwait
-        // }
 
         merge(a, temp, low, high, mid);
     }
