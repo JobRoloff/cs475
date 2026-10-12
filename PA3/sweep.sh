@@ -37,6 +37,7 @@ usage() {
 Usage: sweep.sh --variant-dir DIR --dA N --dB N --threads RANGE --reps N
                  (--out FILE.csv | --name NAME)
                  [--make-var KEY=VALUE ...]
+                 [--block-size N]
                  [--extra KEY=VALUE ...]
                  [--seq-time SECONDS [--seq-source TEXT] | --record-seq | --renew-seq]
                  [--allow-gate-failure]
@@ -65,6 +66,11 @@ Optional:
                            --make-var SCHED=dynamic,8 ; repeatable. One
                            rebuild covers every thread count in this call --
                            to compare values, call sweep.sh once per value.
+  --block-size N          forwarded to the timing binary as --block-size N
+                           (a runtime knob, no rebuild) and recorded as
+                           block_size in the output csv's preamble. Omitted:
+                           the binary's default (0) is used and nothing is
+                           recorded.
   --extra KEY=VALUE       recorded verbatim in the output csv's preamble
                            (e.g. --extra unroll=4, for a knob held constant
                            this call); repeatable; passed through to
@@ -123,6 +129,7 @@ SEQ_SOURCE=""
 RECORD_SEQ=0
 RENEW_SEQ=0
 ALLOW_GATE_FAILURE=0
+BLOCK_SIZE=""
 MAKE_VARS=()
 EXTRAS=()
 
@@ -137,6 +144,7 @@ while [ $# -gt 0 ]; do
         --out)               OUT="$2"; shift 2 ;;
         --name)               NAME="$2"; shift 2 ;;
         --make-var)           MAKE_VARS+=("$2"); shift 2 ;;
+        --block-size)         BLOCK_SIZE="$2"; shift 2 ;;
         --extra)              EXTRAS+=("$2"); shift 2 ;;
         --seq-time)          SEQ_TIME="$2"; shift 2 ;;
         --seq-source)        SEQ_SOURCE="$2"; shift 2 ;;
@@ -231,6 +239,7 @@ if [ ! -x "$BINARY" ]; then
 fi
 
 TIME_ARGS=(-dA "$DA" -dB "$DB" -t "$THREADS" -r "$REPS")
+[ -n "$BLOCK_SIZE" ] && TIME_ARGS+=(--block-size "$BLOCK_SIZE")
 
 echo "== Timed sweep (bound): $BINARY ${TIME_ARGS[*]} =="
 RAW_CSV="$(mktemp)"
@@ -268,6 +277,7 @@ fi
 
 echo "== Collecting into $OUT =="
 COLLECT_ARGS=(--raw-csv "$RAW_CSV" --variant "$VARIANT" --dA "$DA" --dB "$DB" --out "$OUT")
+[ -n "$BLOCK_SIZE" ] && COLLECT_ARGS+=(--block-size "$BLOCK_SIZE")
 for kv in "${EXTRAS[@]}"; do
     COLLECT_ARGS+=(--extra "$kv")
 done
