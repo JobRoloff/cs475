@@ -16,6 +16,36 @@ long fib(long n) {
  return x+y;
 }
 
+// F(k) for k = -1 .. n+1, using F(-1) = 1, F(0) = 0, F(1) = 1
+long F(long k) {
+ long a = 1, b = 0, t;   // a = F(-1), b = F(0)
+ if (k < 0) return 1;
+ for (long i = 0; i < k; i++) { t = a + b; a = b; b = t; }
+ return b;
+}
+
+// compare result[] against result[x] = F(n-x+1) for x >= 1, result[0] = F(n-1),
+// and the total against 2F(n+1) - 1; print OK or WRONG
+int check(long n) {
+ long x, total = 0, expected;
+ int ok = 1;
+ for (x = 0; x <= n; x++) {
+  expected = (x == 0) ? F(n-1) : F(n-x+1);
+  if (result[x] != expected) {
+   printf("result[%ld] = %ld, expected %ld\n", x, result[x], expected);
+   ok = 0;
+  }
+  total += result[x];
+ }
+ expected = 2*F(n+1) - 1;
+ if (total != expected) {
+  printf("total = %ld, expected %ld\n", total, expected);
+  ok = 0;
+ }
+ printf(ok ? "OK\n" : "WRONG\n");
+ return ok;
+}
+
 int main(int argc, char **argv) {
  long n, v, i;
  double time;
@@ -35,6 +65,7 @@ int main(int argc, char **argv) {
   time=elapsed_time();
 
   printf("fib(%ld) = %ld\n", n, v);
+  check(n);
 
 #ifdef DEBUG
   printf("call counts:\n");
