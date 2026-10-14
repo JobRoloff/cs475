@@ -1,0 +1,21 @@
+CC = gcc
+OBJS = timer.o
+FLAGS = -O3 -fopenmp
+DEBUGFLAG = -DDEBUG
+SEQFLAGS = -O3 -lm
+
+EXEC = Fib_count Fib_count_debug
+
+all: $(EXEC)
+
+Fib_count: Fib_count.c $(OBJS)
+	$(CC) $(SEQFLAGS)  -o $@ $< $(OBJS)
+
+Fib_count_debug:Fib_count.c $(OBJS)
+	$(CC) $(SEQFLAGS) $(DEBUGFLAG)  -o $@ $< $(OBJS)
+
+timer.o: timer.c
+	$(CC) -O3 -o $@ -c $<
+
+clean:
+	rm -f $(OBJS) $(EXEC)
