@@ -10,11 +10,11 @@ long fib(long n) {
  long x, y;
  if(n<2) return n;
  #pragma omp task shared(x)
- x=fib(n-1);
- result[n-1]++;        //the call fib(n-1) has returned
+ { x=fib(n-1);
+   result[n-1]++; }    //the call fib(n-1) has returned
  #pragma omp task shared(y)
- y=fib(n-2);
- result[n-2]++;        //the call fib(n-2) has returned
+ { y=fib(n-2);
+   result[n-2]++; }    //the call fib(n-2) has returned
  #pragma omp taskwait
  return x+y;
 }
@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
 
 #ifdef DEBUG
   printf("call counts:\n");
-  for (i = n; i >= 0; i--) printf("result[%ld] = %ld\n", i, result[i]);
+  for (i = n; i >= 0; i--)
+   printf("result[%ld] = %ld  (expected %ld)\n", i, result[i], (i == 0) ? F(n-1) : F(n-i+1));
 #endif
 
   printf("elapsed time = %lf (sec)\n", time);

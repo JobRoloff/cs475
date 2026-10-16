@@ -69,7 +69,8 @@ int main(int argc, char **argv) {
 
 #ifdef DEBUG
   printf("call counts:\n");
-  for (i = n; i >= 0; i--) printf("result[%ld] = %ld\n", i, result[i]);
+  for (i = n; i >= 0; i--)
+   printf("result[%ld] = %ld  (expected %ld)\n", i, result[i], (i == 0) ? F(n-1) : F(n-i+1));
 #endif
 
   printf("elapsed time = %lf (sec)\n", time);
