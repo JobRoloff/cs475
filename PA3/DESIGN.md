@@ -1,12 +1,24 @@
 # DESIGN
 
-Read `READ_ME_FIRST.md` first. This document explains the code
-structure and desgn of the common `C` code harness and the kernel
-interface. Neither Claude nor the user will normally need to modify it.
-If a bug fix is required, ask the user to report it to the insructors.
+This document explains the code structure and design of the common `C`
+code harness and the kernel interface. Neither Claude nor the user will
+normally need to modify it. If a bug fix is required, ask the user to
+report it to the instructors.
 
 ## Layout
 
+The project is flat: every variant is one source file in the project
+root, and one `Makefile` and one run script serve all of them.
+
+- `PolyMult_<V>.c` — variant `<V>`'s kernel (`PolyMult_GSQ.c`,
+  `PolyMult_OPQ.c`, ...). Parallel variants follow the same pattern
+  (`PolyMult_OPP1.c`, `PolyMult_EXP2.c`, ...).
+- `Makefile` — builds every variant (see Build system below).
+- `run_sweep.sh` — builds a variant, optionally runs its correctness
+  gate, and prints the median time per thread count (see CLI reference).
+- `bin/` — build output: `PolyMult_<V>.{check,check-par,time,time-par}`
+  and `gsq_gold.o`.
+- `results/<V>/`, `plots/` — saved results and workbooks.
 - `shared/include/kernel.h` — the interface every variant implements.
 - `shared/include/accumulate.h` — the accumulation macro that EVERY
   VARIANT MUST USE (reasons are given below).
@@ -17,18 +29,18 @@ If a bug fix is required, ask the user to report it to the insructors.
 - `shared/harness/gold.h`, `shared/harness/gold.o` — the gold-comparison
   suite (linked by every variant except `GSQ`). Provided as a
   precompiled object only — `gold.c` itself is never distributed to
-  students, and is never rebuilt by a variant's own `Makefile`.
-- `shared/harness/time_main.c` — builds `PolyMult.time[-par]`: fills
+  students, and is never rebuilt by the `Makefile`.
+- `shared/harness/time_main.c` — builds `PolyMult_<V>.time[-par]`: fills
   random inputs, times `kernel_multiply`, prints one raw csv row per
   repetition to stdout.
-- `shared/harness/check_main.c` — builds `PolyMult.check[-par]`: runs
+- `shared/harness/check_main.c` — builds `PolyMult_<V>.check[-par]`: runs
   the oracle suite, and the gold suite if `BPM_HAVE_GOLD` is defined.
 
 ## The kernel contract
 
-Every variant defines `kernel_multiply` in its own `src/`, matching
-the signature in `shared/include/kernel.h`. What isn't obvious just
-from reading the header:
+Every variant defines `kernel_multiply` in its own `PolyMult_<V>.c`,
+matching the signature in `shared/include/kernel.h`. What isn't obvious
+just from reading the header:
 
 - `dA` and `dB` are independent — never assume `dA == dB`.
 - Every pointer parameter must be `restrict`-qualified, on the
@@ -62,42 +74,70 @@ Kahan's algorithm to get a precise answer to compare against.
 
 ## Build system
 
-One `Makefile` per variant directory, following `00-GSQ/Makefile`:
+One root `Makefile`. Variants are discovered from the filenames —
+every `PolyMult_<V>.c` is a variant, so adding a file adds a variant
+with no `Makefile` edit. `make` builds all of them; `make <V>` builds
+one.
 
-```
-CHECK_SRCS = $(SRC) $(HARNESS)/oracle.c $(HARNESS)/check_main.c
-TIME_SRCS  = $(SRC) $(HARNESS)/range.c $(HARNESS)/args.c $(HARNESS)/time_main.c
-```
+Each variant gets four binaries, into `bin/`, all with
+`-DBPM_VARIANT='"<V>"'`:
 
-Four targets, into `bin/`:
+| Binary                      | Sources                              | Flags                         |
+|-----------------------------|--------------------------------------|-------------------------------|
+| `PolyMult_<V>.check`        | `PolyMult_<V>.c` + oracle, check_main | `-DCHECKING`                  |
+| `PolyMult_<V>.check-par`    | same                                 | `-DCHECKING -DPAR -fopenmp`   |
+| `PolyMult_<V>.time`         | `PolyMult_<V>.c` + range, args, time_main | `-ffast-math`             |
+| `PolyMult_<V>.time-par`     | same                                 | `-ffast-math -DPAR -fopenmp`  |
 
-| Binary                | Sources      | Flags                                    |
-|------------------------|--------------|-------------------------------------------|
-| `PolyMult.check`       | `CHECK_SRCS` | `-DCHECKING`                              |
-| `PolyMult.check-par`   | `CHECK_SRCS` | `-DCHECKING -DPAR -fopenmp`               |
-| `PolyMult.time`        | `TIME_SRCS`  | `-ffast-math`                              |
-| `PolyMult.time-par`    | `TIME_SRCS`  | `-ffast-math -DPAR -fopenmp`              |
+For a non-`GSQ` variant, `PolyMult_<V>.check`/`.check-par` also get
+`-DBPM_HAVE_GOLD` and link two extra objects: `shared/harness/gold.o`
+(provided, precompiled — see Layout above) and `bin/gsq_gold.o`, a
+recompile of `PolyMult_GSQ.c` with `kernel_multiply` renamed to
+`bpm_gold_multiply` (so gold.o can call it as the reference alongside
+the variant's own `kernel_multiply`). That recompile takes neither
+`-DBPM_VARIANT` nor `-DPAR` — `gold.o` is variant-agnostic, and the GSQ
+recompile must stay GSQ's true checking build regardless of which
+variant links it. `GSQ` itself links no gold: checking it against a
+copy of itself would prove nothing.
 
-All four also get `-DBPM_VARIANT='"<name>"'`. For a non-`GSQ` variant,
-`PolyMult.check`/`.check-par` also get `-DBPM_HAVE_GOLD` and link two
-extra objects: `$(HARNESS)/gold.o` (provided, precompiled — see
-Layout above) and a fresh per-variant recompile of GSQ's own
-`src/PolyMult.c` with `kernel_multiply` renamed to `bpm_gold_multiply`
-(so gold.o can call it as the reference alongside this variant's own
-`kernel_multiply`). Neither takes this variant's own
-`-DBPM_VARIANT`/`-DPAR` defines — `gold.o` is variant-agnostic, and the
-GSQ recompile must stay GSQ's true checking build regardless of which
-variant links it.
+Every header the sources include (`kernel.h`, `accumulate.h`,
+`args.h`, `range.h`, `oracle.h`) is a prerequisite of every binary
+target. Without this, editing a header leaves stale binaries in place
+and a correctness gate silently re-runs old code.
 
-List every header the sources include (`kernel.h`, `accumulate.h`,
-`args.h`, `range.h`, `oracle.h`, and any variant-specific header) as a
-prerequisite of every binary target. Without this, editing a header
-leaves stale binaries in place and a correctness gate silently re-runs
-old code.
+`make debug` rebuilds with `-O0 -g -Wall -Wextra`; `make clean` empties
+`bin/`.
 
 ## CLI reference
 
-`PolyMult.time[-par]`:
+`run_sweep.sh`:
+
+```
+./run_sweep.sh [--debug] <V> "<thread list>" <reps> [binary args...]
+
+  ./run_sweep.sh OPQ "1" 5 -dA 2000 -dB 2000
+  ./run_sweep.sh OPQ "1 2 4 8 16" 5 -dA 2000 -dB 2000
+  ./run_sweep.sh --debug OPQ "1 2 4" 3 -dA 2000 -dB 2000
+```
+
+- Runs `make -s <V>` first.
+- `--debug` runs the correctness gate (`.check`, then `.check-par`)
+  before timing and stops if it fails. Without it, only the timing
+  binary runs.
+- A thread list of exactly `"1"` runs `PolyMult_<V>.time` (no
+  `-fopenmp`) pinned to `BPM_SEQ_CORE`; any other list runs
+  `PolyMult_<V>.time-par` under `taskset -c $BPM_CORESET`,
+  `OMP_PROC_BIND=close`, `OMP_PLACES=$BPM_OMP_PLACES`. The gate's two
+  binaries are bound the same way.
+- Defaults assume the department's fish machines: `BPM_CORESET=16-31`,
+  `BPM_SEQ_CORE=16`, cluster-cyclic `OMP_PLACES`
+  (`{16},{20},{24},{28},{17},...`). Override any of them in the
+  environment.
+- Prints `threads  median_s  gflops  reps`, one line per thread count.
+  The raw per-repetition rows are not kept — run the binary directly
+  for those.
+
+`PolyMult_<V>.time[-par]`:
 
 ```
 -dA <int>              degree of polynomial A
@@ -109,18 +149,19 @@ old code.
 --task-threshold <int>
 ```
 
-`PolyMult.check[-par]`: `[-h|--help]` only. `-dA`/`-dB`/`--validate`
+`PolyMult_<V>.check[-par]`: `[-h|--help]` only. `-dA`/`-dB`/`--validate`
 are accepted for command-line-shape consistency but do not change what
 runs — the oracle (and gold, if linked) suites use their own fixed
 cases.
 
 ## Raw output format
 
-`PolyMult.time[-par]` prints one csv row per repetition to stdout:
+`PolyMult_<V>.time[-par]` prints one csv row per repetition to stdout:
 
 ```
 variant,dA,dB,threads,block_size,leaf_size,task_threshold,build_params,rep,seconds,gflops
 ```
 
-`collect.py` (see `READ_ME_FIRST.md`) turns this into the results csv
-format.
+`build_params` is quoted and may contain commas (a schedule clause
+does), so read `seconds` and `gflops` from the end of the row.
+`run_sweep.sh` reduces these rows to a median per thread count.

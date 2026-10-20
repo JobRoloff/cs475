@@ -1,2 +1,0 @@
-Summary of SIMD Findings
-The results conclusively show that adding #pragma omp simd to the clean 2-loop outer product kernel yields 12.98 GFLOP/s—virtually identical to the unvectorized baseline (13.00 GFLOP/s). This confirms that GCC's auto-vectorizer at -O3 -march=native was already fully vectorizing the contiguous memory traversal of the inner loop, meaning the explicit pragma had no performance delta.

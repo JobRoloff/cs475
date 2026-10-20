@@ -94,10 +94,28 @@ signal to stop and ask the instructor — not to edit the json yourself.
 
 ## Part 3: The Infrastructure
 
-`plot.py`, `sweep.sh`, `run.sh`, `_gate.sh`, and the harness are shared —
-every student's project uses the same copies. They're provided; you
-don't need to change them. If Claude runs into an unforeseen problem
+The project is flat: each variant is one file, `PolyMult_<V>.c`, in the
+project root. The root `Makefile`, `run_sweep.sh`, and the harness under
+`shared/` serve every variant. If Claude runs into an unforeseen problem
 there, accept the fix and report it to the instructor/GTA.
+
+### Building and Running
+
+```
+make                 # build every variant into bin/
+make OPQ             # build one variant
+
+./run_sweep.sh OPQ "1" 5 -dA 2000 -dB 2000            # sequential, pinned
+./run_sweep.sh OPQ "1 2 4 8 16" 5 -dA 2000 -dB 2000   # parallel, bound
+./run_sweep.sh --debug OPQ "1 2 4" 3 -dA 2000 -dB 2000
+```
+
+`run_sweep.sh` builds the variant, then prints the median time and
+GFLOP/s for each thread count. `--debug` runs the correctness gate
+(oracle suite, plus the gold comparison against GSQ) first and stops if
+it fails; without it only the timing binary runs, so checking never
+costs a timed run anything. Adding a variant is just adding a
+`PolyMult_<V>.c` file.
 
 ### `reference/`
 
@@ -110,24 +128,24 @@ template from the Mandelbrot assignment — adapt it for this one.
 
 ### Running a Single Call Yourself
 
-`sweep.sh` builds, gates, and then calls the timing binary with this
-exact invocation. You can run the same command directly in your
-terminal for a one-off timed call, skipping the build/gate/csv steps:
+`run_sweep.sh` calls the timing binary with this exact invocation. You
+can run the same command directly in your terminal to see the raw
+per-repetition csv rows instead of medians:
 
 ```
 # sequential (t=1), pinned to one core:
-taskset -c 16 ./bin/PolyMult.time -dA <int> -dB <int> -t 1 -r <int>
+taskset -c 16 ./bin/PolyMult_<V>.time -dA <int> -dB <int> -t 1 -r <int>
 
 # parallel (t>1), bound and placed:
 OMP_PROC_BIND=close \
 OMP_PLACES='{16},{20},{24},{28},{17},{21},{25},{29},{18},{22},{26},{30},{19},{23},{27},{31}' \
-taskset -c 16-31 ./bin/PolyMult.time-par -dA <int> -dB <int> -t <range> -r <int>
+taskset -c 16-31 ./bin/PolyMult_<V>.time-par -dA <int> -dB <int> -t <range> -r <int>
 ```
 
 The core list, pinned sequential core, and `OMP_PLACES` string are
-`_gate.sh`'s current defaults (`BPM_CORESET`, `BPM_SEQ_CORE`,
-`BPM_OMP_PLACES`) — check there if they've been overridden for a
-different machine. `taskset` plus `OMP_PROC_BIND`/`OMP_PLACES` together
+`run_sweep.sh`'s defaults (`BPM_CORESET`, `BPM_SEQ_CORE`,
+`BPM_OMP_PLACES`) — set them in the environment to bind differently on
+a different machine. `taskset` plus `OMP_PROC_BIND`/`OMP_PLACES` together
 give you a precise, repeatable mapping of threads to cores; without
 them, the OS scheduler and OpenMP runtime are free to place threads
 differently from one run to the next, including onto fewer cores than
@@ -135,22 +153,19 @@ intended, which corrupts the measurement.
 
 ### Where Results and Plots Land
 
-- `sweep.sh` writes each call's csv under its own `<variant-dir>/results/`.
-- `plot.py`'s output path auto-derives: csvs from a single variant
-  produce a workbook inside that variant's own `./plots/<topic>/`; csvs
-  spanning more than one variant produce a cross-variant comparison
-  workbook one level up, in `../plots/<topic>/` at the common parent.
+`run_sweep.sh` prints to the terminal only; nothing is written to disk.
+Keep what you want yourself — e.g. `| tee results/<V>/<name>.txt` on a
+`run_sweep.sh` call, or redirect a direct binary call's raw csv. Earlier
+results and workbooks are kept under `results/GSQ/`, `results/OPQ/`, and
+`plots/`.
 
 ### T(seq): What the Baseline Actually Is
 
-Each variant's Speedup is computed against the minimum of up to three
-things: its own no-`-fopenmp` binary's time, its `*Q` ancestor's own
-no-`-fopenmp` binary's time (a `*P<n>` variant may restructure the loop
-nest, not just annotate it — so these can genuinely differ), and this
-sweep's own 1-thread time. Whichever is smallest wins. **Every variant,
-including every `*P<n>` parallel one, needs its own `--record-seq`** —
-recording never happens automatically across directories, only the
-lookup does.
+Speedup is not computed for you. A sensible baseline for a variant is
+the minimum of: its own no-`-fopenmp` binary's time (a `"1"` thread list
+to `run_sweep.sh`), its `*Q` ancestor's no-`-fopenmp` time (a `*P<n>`
+variant may restructure the loop nest, not just annotate it — so these
+can genuinely differ), and the parallel binary's own 1-thread time.
 
 This makes Speedup an approximation, not a number you should compare
 precisely across variants — **Performance is the metric for that.**

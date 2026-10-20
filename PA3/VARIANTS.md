@@ -58,8 +58,8 @@ explored.
 ## 05-DCP: Divide-and-Conquer Parallel
 
 Parallelize DCQ using OpenMP tasks. Each strategy explored gets its own
-variant directory (`DCP1`, `DCP2`, ...), with the common infrastructure
-copied into each, per the naming convention in `DESIGN.md`.
+variant source file (`PolyMult_DCP1.c`, `PolyMult_DCP2.c`, ...), per the
+naming convention in `DESIGN.md`.
 
 ---
 

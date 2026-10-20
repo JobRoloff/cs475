@@ -13,8 +13,8 @@ No tuning parameters. Reference baseline.
 
 No sequential tuning (loop order fixed). Parallel: `schedule`, chunk
 size, `reduction` — guided by investigation. `collapse` is illegal;
-the `nowait` diagnostic run lands under `results/diagnostic/`
-(`--allow-gate-failure`).
+a `nowait` diagnostic fails the gate under `run_sweep.sh --debug`, but
+can still be timed by running without `--debug`.
 
 ## 02-EXQ
 
