@@ -34,7 +34,7 @@ GOLD_OBJS = $(HARNESS)/gold.o bin/gsq_gold.o
 
 all: $(VARIANTS)
 
-# `make OPQ` builds just that variant's four binaries.
+# `make BKQ` builds just that variant's four binaries.
 $(VARIANTS): %: bin/PolyMult_%.check bin/PolyMult_%.check-par bin/PolyMult_%.time bin/PolyMult_%.time-par
 
 bin:
