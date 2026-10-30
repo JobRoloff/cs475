@@ -40,6 +40,10 @@ saved). `run_sweep.sh` keeps only the median, so the individual reps were not
 kept. OPQ and BKQ are PA3's recorded baselines (2026-10-20). [BKQ rerun in
 the same session: pending.]
 
+A saved DCQ baseline at Part B's size (99,999 × 99,999, 5 reps, core 16) was
+recorded later: median 0.6792 s, 29.45 GFLOP/s
+(`results/DCP2/clamp_check_20261029_1440.csv`). Part B's speedups use it.
+
 #### Analysis
 
 | variant | GFLOP/s | % of TPP (35.2) | × OPQ |
@@ -381,3 +385,319 @@ verified by tracing those reps.
   - the libgomp mechanism behind the taskgroup wait is not verified;
   - RD's idle thread appeared only on the first call of a process;
   - the 3 ms before the first leaf in T2NG and RD is not explained.
+
+### Moving from a reduction to taskwait
+
+Near-linear speedup of DCQ was attained by giving each thread its own private
+copy of `c` (15.22× on 16 E-cores, T3NG). These copies were combined in
+parallel once all tasks were complete.
+
+One limitation of this design is its memory footprint, since each thread
+allocates its own copy of `c` (12.8 MB at 16 threads here, and 256 MB at
+1,000 × 4,000,000).
+
+In the next set of experiments, we remove the reduction and have every task
+write to a single shared copy of `c`. Races are avoided by ordering the
+subproblems with `taskwait` instead. Before running anything, we analyze the
+work and span of this ordering to predict how much speedup it can keep.
+
+### Experiment 3: taskwait only (Goal 2)
+
+#### Question
+
+Without a reduction, every task writes the shared `c`, and races are avoided
+only by ordering the subproblems with `taskwait`. How much speedup does that
+ordering leave, and can the work and span of the recursion predict it?
+
+#### Hypothesis
+
+Written before any DCP2 run.
+
+At every split, LL and HH write disjoint outputs and can run together. LH and
+HL write the same outputs, and each overlaps LL and HH, so they run after LL
+and HH, one after the other:
+
+    stage 1:  LL ∥ HH      taskwait
+    stage 2:  LH
+    stage 3:  HL
+
+- **Work:** W(n) = 4 W(n/2), 6,241 leaves (79 × 79 at L = 1,280).
+- **Span:** S(n) = 3 S(n/2), which grows like n^1.585. That is about
+  1,000 leaves with tasks down to single leaves (cutoff 1). With cutoff 2,
+  each 2 × 2 block at the bottom runs its 4 leaves in sequence, so the span
+  is about 1,350 leaves.
+- **Parallelism:** W / S ≈ 6.2 (cutoff 1), or about 4.6 (cutoff 2).
+- **Prediction (cutoff 1):** between the greedy lower bound W / (W/P + S) and
+  the upper bound min(P, W/S): 4.5–6.2× at 16 threads (about 130–180 GFLOP/s).
+  The curve should be close to linear for the first few threads, then
+  flatten after about 6–8.
+- **Cutoff 2:** 3.6–4.6× at 16 threads.
+- **1 thread:** within 1% of DCQ.
+- **Refuted if:** above 6.2× (a race, or a shorter span than the analysis
+  says), or more than about 10% below 4.5× (a cost the model leaves out).
+
+#### Experiment Design
+
+DCP2 is a new variant with the same leaf kernel, setup and recursion as DCQ,
+no reductions, and no `taskgroup`:
+
+    #pragma omp parallel
+    #pragma omp single
+        dc(root)                      // called directly, not as a task
+
+    dc(node), splitting both ranges, above the cutoff:
+        #pragma omp task  dc(LL)
+        #pragma omp task  dc(HH)
+        #pragma omp taskwait
+        dc(LH)                        // called directly
+        dc(HL)                        // called directly, after LH returns
+
+- **One-sided splits:** a node that splits only one range runs its two
+  halves in sequence, since their outputs overlap. This makes lopsided shapes
+  sequential, which is out of scope here.
+- **Leaves write only their own outputs**, since `c` is shared:
+  - leaf sizes with L % 8 ≠ 0 are rejected;
+  - the last row group of a leaf is clamped so it writes no output past
+    `ilast + j0 + len − 1`.
+- **Cutoff:** `--task-threshold`, default 1 (tasks down to single leaves).
+- **Run:** 99,999 × 99,999, L = 1,280, E-cores 16–31 with `run_sweep.sh`'s
+  binding, 1–16 threads, 5 reps, cutoffs 1 and 2 alternating at each thread
+  count.
+
+#### Experiment Run
+
+| check | result | file |
+|---|---|---|
+| gate: `.check`, `.check-par` at 1, 3, 16 threads | 42/42 oracle, 14/14 gold at each | `results/DCP2/diagnostic/gate_{seq,1,3,16}.txt` |
+| `verify_timed`, 32 configurations at 1, 3, 16 threads | 0 failed at each | `results/DCP2/diagnostic/verify_timed.txt` |
+| leaf clamp: DCP2 at 1 thread against DCQ, back to back | 0.6796 s against 0.6792 s (0.07% slower) | `results/DCP2/clamp_check_20261029_1440.csv` |
+| race controls | both fail (Experiment 3a) | `results/DCP2/diagnostic/race{1,2}_gate.txt` |
+
+Sweep: `results/DCP2/sweep_raw_20261029_1447.csv` (160 rows, every rep).
+Speedup is against DCQ's 0.6792 s at the same size.
+
+#### Results
+
+| threads | lower bound (cutoff 1) | **cutoff 1** | cutoff 2 | upper bound (cutoff 1) | rep spread (cutoff 1) |
+|---|---|---|---|---|---|
+| 1 | — | 1.00 | 1.00 | 1.0 | 0.2% |
+| 2 | 1.51 | 1.93 | 1.93 | 2.0 | 0.4% |
+| 3 | 2.03 | 2.31 | 2.30 | 3.0 | 11.4% |
+| 4 | 2.44 | **2.41** | 2.38 | 4.0 | 8.0% |
+| 6 | 3.06 | 3.22 | 3.24 | 6.0 | 5.4% |
+| 8 | 3.51 | 3.73 | 3.64 | 6.2 | 5.8% |
+| 10 | 3.84 | 3.87 | 3.87 | 6.2 | 1.8% |
+| 12 | 4.11 | **4.08** | 4.00 | 6.2 | 3.8% |
+| 14 | 4.32 | **4.17** | 4.07 | 6.2 | 1.2% |
+| 16 | 4.49 | **4.24** | 4.09 | 6.2 | 2.1% |
+
+At 16 threads: 124.9 GFLOP/s with cutoff 1 (22.2% of the 16-core TPP) and
+120.5 with cutoff 2. Bold marks results below the lower bound. Every thread
+count is in the csv. The rows not shown follow the same pattern: above the
+lower bound at 5, 7, 9 and 11 threads, below it at 13 (4.12 against 4.22)
+and 15 (4.22 against 4.41).
+
+#### Analysis
+
+- **1 thread:** within 0.1% of DCQ. Supported.
+- **The ceiling:** supported. The speedup flattens after about 8 threads
+  (3.73× at 8, 4.24× at 16), far below Experiment 2's 15.22×.
+- **The lower bound:** not quite. At every thread count from 12 up (and at
+  4), cutoff 1 runs 1–6% below the greedy lower bound: 4.24× at 16 against
+  4.49×. That is
+  inside the hypothesis's 10% tolerance, but it shouldn't happen at all if
+  the scheduler were greedy. The bound assumes no thread is ever idle while
+  a task is ready to run.
+- **Cutoff 2:** inside its own range at 16 threads (4.09× against
+  3.6–4.6×).
+- **The cutoff matters much less than predicted:** 4.24× against 4.09× at
+  16 threads (3%). A span of 1,000 leaves against 1,350 predicts a gap of
+  about 20–35%. Cutoff 1 behaves almost as if its span were already as long
+  as cutoff 2's (Experiment 3b).
+- **Rep-to-rep spread is large from 3 to 9 threads** (5–12%), unlike
+  Experiment 2's final builds (under 6%).
+
+### Experiment 3a: are both orderings necessary? (race controls)
+
+- **Design:** two builds that each drop one ordering, run through the
+  16-thread gate:
+  - RACE=1: no `taskwait`, so LH and HL start while LL and HH may still be
+    running;
+  - RACE=2: `taskwait` kept, but LH and HL run as two tasks together.
+- **Result:**
+
+  | control | oracle failed | gold failed |
+  |---|---|---|
+  | RACE=1 | 5 / 42 | 2 / 14 |
+  | RACE=2 | 5 / 42 | 2 / 14 |
+
+  Every failure was at 20,000 × 20,000. RACE=2 corrupted more outputs than
+  RACE=1 in 6 of the 7 failing cases (e.g. constants: 13,560 against 2,656 of
+  40,001).
+- **Conclusion:** both orderings are needed. RACE=2 corrupts more because LH
+  and HL write exactly the same range, while RACE=1's overlaps are partial
+  and only last while LL and HH are still running.
+- **Limit of the check:** the gate exercises concurrency at only one size.
+  Smaller sizes create too few tasks, and lopsided shapes run sequentially in
+  DCP2.
+
+### Experiment 3b: where do the threads spend their time?
+
+- **Design:** TRACE build (never used for rates), 3 calls per process, call 2
+  reported. Per thread: leaves, time in leaves, and time with a `taskwait`
+  open (nested waits counted once), split into leaf time and the rest.
+- **Result** (`results/DCP2/diagnostic/trace_*.err`):
+
+  | threads | wall (s) | `single` thread: leaves | `single` thread: ms in `taskwait` (of which leaves) | other threads: ms in leaves |
+  |---|---|---|---|---|
+  | 2 | 0.354 | 3,286 | 342.1 (340.5) | 328.9 |
+  | 8 | 0.187 | **98** | **175.2 (0.4)** | 76.5–107.5 |
+  | 16 | 0.160 | **121** | **147.7 (2.8)** | 24.9–51.8 |
+
+  The leaf time summed over all threads stays at about 680 ms at every
+  thread count.
+- **Conclusion:**
+  - **The kernel doesn't slow down.** All of the loss is waiting: at
+    16 threads a thread runs leaves for about 42 ms of a 160 ms call, so it
+    waits about 73% of the time.
+  - **The `single` thread is nearly idle** at 8 and 16 threads, almost the
+    whole call inside a `taskwait`. It runs the root, creates LL and HH as
+    tasks, and waits. Other threads take both tasks straight away.
+  - **Hypothesis (not yet tested):** a thread waiting in `taskwait` may only
+    run its own direct children in GCC's runtime, so it has nothing to do
+    until LL and HH finish, and the same happens at every level. A scheduler
+    like that isn't greedy. That would explain both the results below the
+    greedy lower bound and why cutoff 1 acts as if its span were longer.
+    Experiment 3c tests this.
+
+### Experiment 3c: the parent runs HH itself (DCP2HD)
+
+#### Question
+
+Is the shortfall below the greedy lower bound caused by threads that wait in
+a `taskwait` while their children run elsewhere? If each parent runs one
+child itself instead of waiting for both, do those threads go back to work?
+
+#### Hypothesis
+
+In DCP2 a parent creates LL and HH as tasks and waits. Other threads take
+both at once, and the parent can only run its own children while it waits
+(Experiment 3b), so it sits idle through stage 1. Several threads can be
+parked like this at the same time, so fewer than P threads do the work.
+
+If the parent creates only LL as a task and runs HH itself, it works through
+stage 1 and waits only if LL is still running when HH finishes. The ordering
+(LL ∥ HH, then LH, then HL) is unchanged, so the work, the span and the
+ceiling of about 6.2× stay the same. Only the idle time changes:
+
+- **The `single` thread runs leaves:** at 8 and 16 threads, at least half as
+  many as the average of the other threads (it ran 98 and 121 in DCP2).
+- **Time waiting without running leaves drops:** summed over all threads at
+  16 threads, by at least half against DCP2 (Experiment 3b's trace).
+- **16 threads, cutoff 1:** 4.5–5.0×, back above the greedy lower bound
+  (DCP2: 4.24×), and never above the 6.2× ceiling.
+- **The cutoff matters more:** cutoff 2 falls further behind cutoff 1 than
+  DCP2's 3%, toward the 20–35% the span difference predicts.
+- **1 thread:** within 1% of DCQ.
+- **Refuted if:** the `single` thread still runs under a quarter of the
+  others' average, or 16 threads stay below 4.4× (no gain beyond the reps'
+  roughly 2% spread). Either would mean the waiting parent is not what holds
+  DCP2 below the bound.
+
+#### Experiment Design
+
+DCP2HD is DCP2 with one change at every node that splits both ranges:
+
+    DCP2                           DCP2HD
+    #pragma omp task  dc(LL)       #pragma omp task  dc(LL)
+    #pragma omp task  dc(HH)       dc(HH)              // run directly
+    #pragma omp taskwait           #pragma omp taskwait
+    dc(LH)                         dc(LH)
+    dc(HL)                         dc(HL)
+
+Everything else is identical: leaf, setup, clamp, cutoff, top level (the
+`single` thread calls the root directly, no `taskgroup`).
+
+- **Checks:** gate at 1, 3 and 16 threads; `verify_timed` at 1, 3 and 16
+  threads; a race control that removes the `taskwait` (LH starts while LL may
+  still run), which must fail.
+- **Trace:** 2, 8 and 16 threads, 3 calls per process, call 2 reported, same
+  columns as Experiment 3b.
+- **Sweep:** DCP2 and DCP2HD, cutoffs 1 and 2, alternating at each thread
+  count, 1–16 threads, 5 reps, 99,999 × 99,999, L = 1,280. Speedup against
+  DCQ's 0.6792 s.
+
+#### Experiment Run
+
+| check | result | file |
+|---|---|---|
+| DCP2's default binaries unchanged by the switch | identical disassembly and bytes | — |
+| gate: `.check`, `.check-par` at 1, 3, 16 threads | 42/42 oracle, 14/14 gold at each | `results/DCP2/diagnostic/gate_hd_{seq,1,3,16}.txt` |
+| `verify_timed` at 1, 3, 16 threads | 0 of 32 failed at each | `results/DCP2/diagnostic/verify_timed_hd.txt` |
+| race control (no `taskwait`), 16 threads | fails: oracle 4/42, gold 2/14, all at 20,000 × 20,000 | `results/DCP2/diagnostic/race_hd1_gate.txt` |
+
+The trace ran (`results/DCP2/diagnostic/trace_hd_*.err`, 3 calls per
+process, call 2 reported). The sweep was not run (see Results).
+
+#### Results
+
+| 16 threads (trace build) | DCP2 | DCP2HD |
+|---|---|---|
+| wall time | 0.160 s | **0.401 s** |
+| `single` thread: leaves | 121 | 1,380 |
+| `single` thread: `taskwait`s | 79 | 444 |
+| `single` thread: ms in `taskwait` (of which leaves) | 147.7 (2.8) | **260.7 (1.2)** |
+| other threads: ms in leaves | 24.9–51.8 | 26.9–66.2 |
+| other threads: ms in `taskwait` | 21–68 | 1.9–57 |
+
+Wall time at the other thread counts: 0.681 s at 1 thread (DCP2 0.681),
+0.526 s at 2 (0.354), 0.404 s at 8 (0.187). The leaf time summed over all
+threads stays at about 680 ms, and setup at about 1 ms.
+
+#### Analysis
+
+- **Refuted as built:** DCP2HD is 2.5× slower than DCP2 at 16 threads, not
+  faster. The `single` thread now runs the most leaves, but spends 261 ms in
+  `taskwait` with almost no leaves inside it. The other threads are mostly
+  idle *outside* `taskwait`: with 680 ms of leaves in a 401 ms call, only
+  about 1.7 threads run leaves at a time on average.
+- **Worked out afterwards (not yet tested):** a `taskwait` waits for every
+  child task of the *task it is in*, not only for the tasks created at the
+  same level of the recursion. In DCP2HD, HH runs directly inside the
+  parent's task, so every `taskwait` inside HH's recursion belongs to that
+  same task. The innermost one waits for the parent's LL, which at the root
+  is a quarter of the whole problem, before HH can go on to its own LH and
+  HL:
+
+      parent task:
+        create LL            ← child 1: running on another thread
+        HH, run directly:
+           create LL'        ← child 2
+           HH', run directly:
+              ...
+              taskwait       ← waits for LL'' and also LL' and the outer LL
+
+  This is still correct (waiting longer never races, so the gate passes), but
+  it serializes the HH chain, and the chain stops creating new tasks for the
+  other threads. DCP2 doesn't have this problem, even though LH and HL run
+  directly there too: by the time LH runs, the node's `taskwait` has already
+  finished all of the node's children.
+- **So DCP2HD does not test this experiment's hypothesis.** It changed two
+  things at once: the parent runs HH (intended), and HH's `taskwait`s wait on
+  unrelated work (not intended).
+- **Next (pending):** DCP2HD2 runs HH as an *undeferred* task,
+  `#pragma omp task if(0)`. The current thread runs it immediately, as with a
+  direct call, but it is a separate task, so its `taskwait`s wait only for
+  HH's own children. The hypothesis above then applies unchanged. If the
+  `taskwait` explanation is right, DCP2HD2 should also run at least as fast
+  as DCP2 at 16 threads (0.160 s), not 2.5× slower.
+
+### Experiment 3d (pending): best leaf size at 16 threads
+
+- **Question:** which leaf size gives the best speedup? This is the "best
+  speedup you can get" part of goal 2.
+- **Hypothesis:** a smaller leaf adds parallelism, since W/S grows like
+  (n/L)^0.415, but the kernel runs slower (PA3 Experiment 7). The best leaf
+  size at 16 threads should be below 1,280, around 256–512 (at least about
+  5.4–5.6× against DCQ at 1,280).
+- **Design:** after 3c, on whichever of DCP2 and DCP2HD2 is faster.
