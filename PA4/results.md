@@ -1,4 +1,4 @@
-## Starting Point
+****## Starting Point
   What DCQ is (recursion on a×b, split rule, leaves = BKQ's padded kernel on the L grid),
   machine/cores/TPP, gate, baselines carried over: OPQ 9.41, BKQ 29.27.
 
@@ -516,6 +516,25 @@ and 15 (4.22 against 4.41).
   as cutoff 2's (Experiment 3b).
 - **Rep-to-rep spread is large from 3 to 9 threads** (5–12%), unlike
   Experiment 2's final builds (under 6%).
+- **Worked out afterwards: the span estimate was too short.** S ≈ 79^1.585
+  assumes every split halves the problem exactly. DCQ's split tree doesn't:
+  79 blocks split 39/40, and near the bottom the uneven splits leave 1 × 2
+  and 2 × 1 pieces, which DCP2 runs in sequence (one-sided splits). Computing
+  work and span on the actual split tree, with the same split rule and the
+  thin edge leaves, in units of one full leaf (script `span.py`):
+
+  | | work | span | W / S | bounds at 4 / 8 / 16 threads |
+  |---|---|---|---|---|
+  | hypothesis, cutoff 1 | 6,241 | 1,000 | 6.2 | 2.44–4.0 / 3.51–6.2 / 4.49–6.2 |
+  | **exact, cutoff 1** | 6,104 | **1,334** | **4.58** | 2.13–4.0 / 2.91–4.58 / **3.56–4.58** |
+  | exact, cutoff 2 | 6,104 | 1,412 | 4.32 | 2.08–4.0 / 2.81–4.32 / 3.40–4.32 |
+
+  With the exact span, every measurement is inside its bounds, including
+  4.24× at 16 threads. The cutoff difference is also explained: the exact
+  spans differ by 6%, not 35%, and the measured gap is 3–4%. So the
+  "below the lower bound" results above, and the scheduler explanation
+  proposed for them in 3b, came from the span estimate, not from the
+  scheduler.
 
 ### Experiment 3a: are both orderings necessary? (race controls)
 
@@ -563,14 +582,17 @@ and 15 (4.22 against 4.41).
   - **The `single` thread is nearly idle** at 8 and 16 threads, almost the
     whole call inside a `taskwait`. It runs the root, creates LL and HH as
     tasks, and waits. Other threads take both tasks straight away.
-  - **Hypothesis (not yet tested):** a thread waiting in `taskwait` may only
+  - **Hypothesis at the time:** a thread waiting in `taskwait` may only
     run its own direct children in GCC's runtime, so it has nothing to do
     until LL and HH finish, and the same happens at every level. A scheduler
     like that isn't greedy. That would explain both the results below the
     greedy lower bound and why cutoff 1 acts as if its span were longer.
     Experiment 3c tests this.
+  - **Revisited after 3c:** the exact span (Experiment 3, Analysis) already
+    accounts for both observations. Waiting parents do cost speedup, but
+    mostly at low thread counts (Experiment 3c).
 
-### Experiment 3c: the parent runs HH itself (DCP2HD)
+### Experiment 3c: the parent runs HH itself (DCP2HD, DCP2HD2)
 
 #### Question
 
@@ -661,7 +683,7 @@ threads stays at about 680 ms, and setup at about 1 ms.
   `taskwait` with almost no leaves inside it. The other threads are mostly
   idle *outside* `taskwait`: with 680 ms of leaves in a 401 ms call, only
   about 1.7 threads run leaves at a time on average.
-- **Worked out afterwards (not yet tested):** a `taskwait` waits for every
+- **Worked out afterwards (confirmed by DCP2HD2 below):** a `taskwait` waits for every
   child task of the *task it is in*, not only for the tasks created at the
   same level of the recursion. In DCP2HD, HH runs directly inside the
   parent's task, so every `taskwait` inside HH's recursion belongs to that
@@ -685,19 +707,581 @@ threads stays at about 680 ms, and setup at about 1 ms.
 - **So DCP2HD does not test this experiment's hypothesis.** It changed two
   things at once: the parent runs HH (intended), and HH's `taskwait`s wait on
   unrelated work (not intended).
-- **Next (pending):** DCP2HD2 runs HH as an *undeferred* task,
+- **Next:** DCP2HD2 runs HH as an *undeferred* task,
   `#pragma omp task if(0)`. The current thread runs it immediately, as with a
   direct call, but it is a separate task, so its `taskwait`s wait only for
   HH's own children. The hypothesis above then applies unchanged. If the
   `taskwait` explanation is right, DCP2HD2 should also run at least as fast
   as DCP2 at 16 threads (0.160 s), not 2.5× slower.
 
-### Experiment 3d (pending): best leaf size at 16 threads
+#### DCP2HD2: Experiment Design
 
-- **Question:** which leaf size gives the best speedup? This is the "best
-  speedup you can get" part of goal 2.
-- **Hypothesis:** a smaller leaf adds parallelism, since W/S grows like
-  (n/L)^0.415, but the kernel runs slower (PA3 Experiment 7). The best leaf
-  size at 16 threads should be below 1,280, around 256–512 (at least about
-  5.4–5.6× against DCQ at 1,280).
-- **Design:** after 3c, on whichever of DCP2 and DCP2HD2 is faster.
+    #pragma omp task          dc(LL)
+    #pragma omp task if(0)    dc(HH)    // runs now, on this thread, as its own task
+    #pragma omp taskwait
+    dc(LH)
+    dc(HL)
+
+Same checks, trace and sweep as planned for DCP2HD above.
+
+#### DCP2HD2: Experiment Run
+
+| check | result | file |
+|---|---|---|
+| DCP2 and DCP2HD binaries unchanged by the new switch value | byte-identical | — |
+| gate: `.check`, `.check-par` at 1, 3, 16 threads | 42/42 oracle, 14/14 gold at each | `results/DCP2/diagnostic/gate_hd2_{seq,1,3,16}.txt` |
+| `verify_timed` at 1, 3, 16 threads | 0 of 32 failed at each | `results/DCP2/diagnostic/verify_timed_hd2.txt` |
+| race control (no `taskwait`), 16 threads | fails: oracle 4/42, gold 2/14, all at 20,000 × 20,000 | `results/DCP2/diagnostic/race_hd2_1_gate.txt` |
+
+- **Trace:** `results/DCP2/diagnostic/trace_hd2_*.err`, 3 calls per process,
+  call 2 reported.
+- **Sweep:** on perch, an identical machine (i9-13900K, E-cores 16–31;
+  `results/DCP2/diagnostic/machine_20261030_0925.txt`). Before starting and
+  before each thread count, an idle check: CPUs 16–31 at most 3.1% busy, no
+  other user's process above 2.0% CPU (`idle_20261030_0925.log`). Every rep
+  is in `results/DCP2/sweep_raw_hd2_20261030_0925_perch.csv`.
+- **A first sweep on the original machine was discarded.** Another user's
+  process was running at about 530% CPU, and spreads reached 86%. It is kept
+  in `results/DCP2/diagnostic/` and not used.
+
+#### DCP2HD2: Results
+
+Trace, 16 threads:
+
+| | DCP2 | DCP2HD | **DCP2HD2** |
+|---|---|---|---|
+| wall time | 0.159 s | 0.400 s | **0.153 s** |
+| `single` thread: leaves | 121 | 1,380 | 1,388 |
+| `single` thread: `taskwait`s | 79 | 444 | 444 |
+| `single` thread: ms in `taskwait` (of which leaves) | 147.7 (2.8) | 260.7 (1.2) | **13.4 (2.1)** |
+| other threads: average leaves | 408 | 324 | 324 |
+| all threads: ms in `taskwait` without leaves | 503.1 | 413.8 | **20.4** |
+| all threads: ms in leaves | 680.8 | 681.1 | 680 |
+
+At 8 threads: 0.165 s against DCP2's 0.186. The `single` thread ran 1,469
+leaves, against an average of 682 for the others, and waiting without leaves
+summed to 30.0 ms (DCP2: 398.0).
+
+Sweep (perch), speedup against DCQ's 0.6792 s:
+
+| threads | DCP2 c1 | **DCP2HD2 c1** | DCP2 c2 | DCP2HD2 c2 | exact bounds, cutoff 1 | largest spread |
+|---|---|---|---|---|---|---|
+| 1 | 0.99 | 0.99 | 0.99 | 1.00 | — | 0.2% |
+| 2 | 1.93 | 1.93 | 1.93 | 1.93 | 1.4–2.0 | 0.3% |
+| 3 | 2.31 | 2.31 | 2.23 | 2.32 | — | 11.4% (DCP2 c1) |
+| 4 | 2.41 | **3.15** | 2.39 | 3.11 | 2.13–4.0 | 8.7% (HD2 c1) |
+| 6 | 3.37 | **3.68** | 3.22 | 3.63 | — | 8.2% |
+| 8 | 3.69 | **4.06** | 3.63 | 3.98 | 2.91–4.58 | 5.9% |
+| 10 | 3.95 | **4.27** | 3.88 | 4.09 | — | 4.0% |
+| 12 | 4.09 | **4.32** | 3.98 | 4.16 | — | 4.4% |
+| 14 | 4.18 | **4.37** | 4.07 | 4.20 | — | 2.1% |
+| 16 | 4.24 | **4.40** | 4.08 | 4.21 | 3.56–4.58 | 4.5% |
+
+At 16 threads DCP2HD2 runs at 129.6 GFLOP/s with cutoff 1. DCP2 on perch
+matches the earlier sweep (4.24× at 16 threads both times). The largest
+spreads are mostly in DCP2's cells; DCP2HD2's stay within about 3% except
+at 4 threads. Every thread count is in the csv.
+
+#### DCP2HD2: Analysis
+
+- **The `taskwait` explanation for DCP2HD holds.** DCP2HD2 differs from
+  DCP2HD only in running HH as its own task, with the same 444 `taskwait`s
+  and about the same leaves on the `single` thread. It takes 0.153 s at
+  16 threads, against DCP2HD's 0.400.
+- **Against this experiment's hypothesis:**
+
+  | prediction | measured | |
+  |---|---|---|
+  | `single` thread runs at least half the others' average | 1,388 against 324 (16 threads) | supported |
+  | waiting without leaves at least halved (16 threads) | 503 → 20 ms | supported |
+  | 16 threads, cutoff 1: 4.5–5.0× | 4.40× | not reached; exactly at the refutation threshold |
+  | the cutoff matters more, toward 20–35% | 4.5% (4.40 against 4.21) | refuted |
+
+- **Running HH directly helps most at low thread counts:** +31% at 4 threads
+  (3.15× against 2.41×), +10% at 8, +4% at 16. With 4 threads, one parked
+  parent is a quarter of the machine. At 16 threads both versions are close
+  to their span.
+- **Worked out afterwards: DCP2HD2 is span-bound.** One full leaf takes
+  680 ms / 6,104 = 0.111 ms, so the exact span of 1,334 leaves is 148.6 ms.
+  DCP2HD2 takes 154.3 ms at 16 threads, within 4% of it. With cutoff 2:
+  157.3 ms predicted, 161.3 ms measured. DCP2 is 7–8% above its span. The
+  waiting time that disappeared was mostly not on the critical path, which
+  is why a 25-fold drop in waiting gave only a 4% gain at 16 threads.
+- **Conclusion:** the waiting parent is a real cost, but only a large one at
+  low thread counts. At 16 threads the limit is the span, as the work-and-span
+  analysis says once the span is computed on the actual split tree. The
+  remaining lever is the span itself, i.e. the leaf size (Future work,
+  below).
+
+### Experiment 3: conclusions
+
+- **The best without a reduction is DCP2HD2:** 4.40× at 16 threads
+  (129.6 GFLOP/s, 23.0% of the 16-core TPP), with cutoff 1 and L = 1,280.
+  Leaf size was not scanned (Future work, below).
+- **Work and span predict the result, once the span is exact.** Avoiding
+  races without a reduction forces an ordering: LL ∥ HH, then LH, then HL. The
+  span then grows like n^1.585. On the actual split tree it is 1,334 leaves,
+  which limits the speedup to W/S = 4.58× at L = 1,280. DCP2HD2 runs within
+  4% of that span, and every DCP2 and DCP2HD2 result is inside its bounds.
+- **The span estimate must use the actual split tree.** The estimate from
+  the recurrence (79^1.585 ≈ 1,000) assumed every split was even. It was 25%
+  too short, and made the results look as if they were below the greedy lower
+  bound. That led to a scheduler explanation (3b) which the exact span made
+  unnecessary.
+- **Both orderings are needed** (3a). Dropping either one makes the gate
+  fail.
+- **The kernel doesn't slow down; all of the loss is waiting** (3b). The
+  leaf time summed over all threads stays at about 680 ms at every thread
+  count. At 16 threads, each thread waits about 73% of the time.
+- **Which thread waits matters most at low thread counts** (3c). A parent
+  parked in `taskwait` costs a quarter of the machine at 4 threads: DCP2HD2
+  is 31% faster than DCP2 there, but only 4% faster at 16 threads, where both
+  are near their span.
+- **A `taskwait` waits for every child of the current task**, not only those
+  created at the same level. Running a child as a direct call (DCP2HD) made
+  its `taskwait`s wait for unrelated work, and the result was 2.5× slower.
+  Running it as an undeferred task (`task if(0)`, DCP2HD2) avoids this.
+- **The cutoff barely matters:** 3–4%, matching the 6% difference between
+  the exact spans of cutoffs 1 and 2.
+- **Against Experiment 2:** the reduction gives 15.22× by spending one copy
+  of `c` per thread (12.8 MB at 16 threads). Sharing `c` needs no extra
+  memory, but the ordering limits the speedup to about 4.4× at this leaf
+  size. The trade is memory against parallelism.
+- **Open:**
+  - the leaf size, the remaining lever on the span: predicted at about
+    7–8× at L = 256–384, not measured (Future work, below);
+  - large rep-to-rep spreads (5–12%) at 3–9 threads, not explained.
+
+### Future work: leaf size for the taskwait version
+
+Not run. At 16 threads DCP2HD2 is limited by its span, and the span depends
+on the leaf size, so a smaller leaf is the remaining way to raise goal 2's
+speedup.
+
+- **Prediction:** W/S grows like (n/L)^0.415 as L shrinks, but the kernel
+  runs slower at small L (PA3 Experiment 7). The exact span on the actual
+  split tree (`span_L.py`, cutoff 1) gives these ceilings at 16 threads. The
+  last column scales W/S by PA3's one-core rate at that leaf size against
+  1,280:
+
+  | L | blocks per side | W / S | ceiling × DCQ at 1,280 |
+  |---|---|---|---|
+  | 256 | 391 | 9.5 | 7.9 |
+  | 384 | 261 | 8.8 | 8.0 |
+  | 392 | **256** | 9.9 | (no PA3 rate) |
+  | 512 | 196 | 7.1 | 6.7 |
+  | 768 | 131 | 6.7 | 6.4 |
+  | 784 | **128** | 7.4 | (no PA3 rate) |
+  | 1,024 | 98 | 5.4 | 5.3 |
+  | 1,280 | 79 | 4.6 | 4.6 |
+
+  - The best leaf size should be about 256–384. If DCP2HD2 again reaches
+    about 96% of its ceiling, that is about 7–8×, nearly double the result
+    at 1,280, but still about half of Goal 3's 13.80×.
+  - Block counts that are powers of two give a shorter span than their
+    neighbours, since every split is even: 128 blocks (L = 784) at W/S 7.4
+    against 131 blocks (L = 768) at 6.7.
+- **Caveats:** at L = 256 with cutoff 1 there are about 150,000 leaf tasks,
+  so task overhead may show, and cutoff 2 should do better. Experiment 4a
+  also showed that a leaf's speed depends on per-row-group costs (heads,
+  tails, visits), which grow as the leaf shrinks, so the real ceilings may
+  be lower.
+- **Design, if run:** DCP2HD2 at 16 threads; L = 256, 384, 392, 512, 768,
+  784, 1,024 and 1,280; cutoffs 1 and 2; 5 reps each; idle check; DCQ rerun
+  on the same machine for the speedups.
+
+## Part C: Another strategy without a reduction
+
+### Experiment 4: output-range recursion (Goal 3)
+
+#### Question
+
+Experiments 2 and 3 both divide the inputs (`a` × `b`), so subproblems
+overlap in `c`: either each thread gets its own copy (a reduction), or the
+overlapping subproblems wait for each other (`taskwait`). If we divide the
+output instead, so that every task owns its own range of `c`, can we get
+Experiment 2's speedup with no reduction, no extra copy of `c`, and no
+ordering?
+
+#### Hypothesis
+
+Written before any DCP3 run.
+
+Each task owns a contiguous range of outputs [k0, k1) and computes every
+pair (i, j) with k0 ≤ i + j < k1. In the (i, j) rectangle, that range is a
+band along the anti-diagonal. Two tasks never write the same element of
+`c`, so no task waits for another; the only sync is the end of the parallel
+region.
+
+    c[0 .. 2n−1)                      split each range where it halves the
+       /        \                     *work* (pairs), not the width
+    [0, m)     [m, 2n−1)
+     / \         / \
+    ... ...     ... ...               stop at 128 pieces (depth 7)
+     |   |       |   |
+    piece piece piece piece           each piece: rows in blocks, a
+                                      parallelogram of pairs per block
+
+- **Work:** the same 99,999² ≈ 10¹⁰ multiply-adds. Each row group computes
+  only the outputs in its piece where it has valid pairs, so the extra
+  (zero-padded) FMAs are about the same as BKQ's.
+- **Span:** one piece, 1/128 of the work (5.3 ms of DCQ's 679 ms), plus 7
+  levels of splitting. W / S = 128.
+- **Pieces are equal in work,** so they should be close to equal in time.
+  For equal, independent pieces the greedy bound (14.2× at 16 threads) is
+  too pessimistic. The exact ceiling is the number of pieces divided by the
+  most pieces any one thread must run: pieces / ⌈pieces / P⌉.
+
+  | threads | ceiling, 128 pieces | ceiling, 256 pieces | T3NG (Experiment 2) |
+  |---|---|---|---|
+  | 4 | 4.00 | 4.00 | 3.98 |
+  | 6 | 5.82 | 5.95 | 5.93 |
+  | 8 | 8.00 | 8.00 | 7.87 |
+  | 10 | 9.85 | 9.85 | 9.77 |
+  | 12 | 11.64 | 11.64 | 11.56 |
+  | 14 | **12.80** | 13.47 | 13.48 |
+  | 16 | 16.00 | 16.00 | 15.22 |
+
+- **1 thread:** within 2% of DCQ. The inner loop is BKQ's padded kernel;
+  only the loop bounds change (a parallelogram instead of a square).
+- **16 threads, 128 pieces:** 15.4–15.8×, above T3NG's 15.22×. T3NG's 2.2 ms
+  over linear included zeroing the private copies (0.8–0.9 ms) and the merge
+  (0.2 ms), which this strategy doesn't have. What remains is setup
+  (0.3–0.9 ms) and end-of-run imbalance (about 0.5 ms): 43.3–44.0 ms against
+  42.5 ms for linear.
+- **A staircase at thread counts that don't divide 128,** most visible at
+  14 threads (at most 12.8×), and smaller with 256 pieces.
+- **Memory:** no copy of `c`; only the padded copies of `b` that DCQ already
+  makes, independent of the thread count.
+- **Refuted if:**
+  - the one-thread time is more than 2% slower than DCQ (the new leaf bounds
+    cost speed, which then caps every count);
+  - with the one-thread time within 2%, 16 threads fall below T3NG's 15.22×
+    (an overhead the model leaves out);
+  - 14 threads with 128 pieces exceed 12.8× by more than the reps' spread
+    (the pieces are not equal in time).
+
+#### Experiment Design
+
+DCP3 is a new variant with the same padded leaf kernel (R = 8, U = 3, four
+shifted copies of `b`), no reduction, no `taskwait` and no `taskgroup`:
+
+    #pragma omp parallel
+    #pragma omp single
+        rec(0, 2n−1, 7)               // called directly; 2^7 = 128 pieces
+
+    rec(k0, k1, depth):
+        if depth == 0:  piece(k0, k1)
+        else:
+            m = point where pairs(k0, m) = pairs(k0, k1) / 2
+            #pragma omp task  rec(k0, m, depth − 1)
+            #pragma omp task  rec(m, k1, depth − 1)
+
+- **pairs(k0, k1)** is the number of (i, j) with k0 ≤ i + j < k1, computed in
+  closed form from the triangle shape.
+- **Recursion by depth,** not by a threshold on pairs: halves are only
+  nearly equal, so a threshold would split some halves again into unequal
+  pieces.
+- **piece(k0, k1):** in chunks of W outputs (default 1,280), so the chunk of
+  `c` stays in L1. For each chunk, every contributing row group computes
+  only the outputs in the chunk where it has valid pairs. Pieces near the
+  ends of `c` are up to about 12,500 outputs wide, so without chunks their
+  `c` window (about 50 KB) would not fit in L1.
+- **Pieces:** a run-time option, a power of two, default 128.
+- **Checks:** gate at 1, 3 and 16 threads; `verify_timed` at 1, 3 and
+  16 threads; a race control that splits each piece's rows into two tasks.
+  Every pair is still computed once, so it must pass at 1 thread and fail
+  at 16.
+- **Run:** first DCP3 at 1 thread against DCQ, back to back, with W = 1,280
+  and with chunking off. Then 1–16
+  threads, 128 and 256 pieces alternating at each thread count, 5 reps,
+  99,999 × 99,999, with the idle check. Speedup against DCQ on the same
+  machine.
+
+#### Experiment Run: first version
+
+These runs are of the first version of DCP3: splits at any output, so
+pieces start at any alignment. Experiments 4a and 4b change the split rule;
+the final sweep is in "Experiment 4: results".
+
+| check | result | file |
+|---|---|---|
+| gate: `.check`, `.check-par` at 1, 3, 16 threads | 42/42 oracle, 14/14 gold | `results/DCP3/diagnostic/gate_*.txt` |
+| trace, 2 / 8 / 16 threads, call 2 of 3 | 128 pieces in every call, pairs total = na × nb | `results/DCP3/diagnostic/trace_{2,8,16}.err` |
+
+- **Piece sizes:** 77,993,847 to 78,260,647 pairs (0.34% apart). A split
+  must fall on a whole output, and one output in the middle of `c` is about
+  100,000 pairs (0.13% of a piece), so this is the rounding of 7 levels of
+  splits. It costs about 0.2 ms at 16 threads.
+- **Trace timings** (trace build, not idle-checked, load average 4.8; not
+  used for rates):
+
+  | threads | wall | sum of piece time | pieces per thread | piece time per thread |
+  |---|---|---|---|---|
+  | 2 | 0.374 s | 742 ms | 64, 64 | 370–372 ms |
+  | 8 | 0.099 s | 759 ms | 16 each | 93–98 ms |
+  | 16 | 0.054 s | 789 ms | 7–9 | 46.5–52.7 ms |
+
+  The summed piece time is 9–16% above DCQ's 680 ms, and at 16 threads the
+  pieces don't take equal time, so threads ran 7 to 9 pieces each.
+
+- **One core** (barracuda, identical to the other two machines; idle checks
+  and gate passed
+  before each run; DCQ run before each DCP3 configuration; 5 reps each;
+  `results/DCP3/onecore_20261031_1701.csv`):
+
+  | configuration | median s | GFLOP/s | against DCQ | spread |
+  |---|---|---|---|---|
+  | DCQ (4 runs) | 0.6788–0.6790 | 29.46 | — | ≤ 0.11% |
+  | DCP3, W = 1,280 | 0.7010 | 28.53 | **+3.2%** | 0.21% |
+  | DCP3, W = 640 | 0.7429 | 26.92 | +9.4% | 0.13% |
+  | DCP3, W = 320 | 0.8097 | 24.70 | +19.3% | 0.18% |
+  | DCP3, chunking off | 0.7377 | 27.11 | +8.6% | 0.32% |
+
+- **The one-thread prediction is refuted:** the best DCP3 is 3.2% slower
+  than DCQ, against the 2% limit. At that rate, even a perfect 16 on
+  16 threads gives 15.5× against DCQ, and the predicted overheads bring it
+  to about 15.0×, below T3NG.
+- **Smaller chunks are slower, and no chunking is slower too.** The cost
+  grows roughly like 1/W (+3.2, +9.4, +19.3%), which points to a fixed cost
+  for each (row group, chunk) pair rather than to cache misses. Without
+  chunks, the wide pieces near the ends of `c` don't fit in L1. The best W
+  is probably above 1,280.
+
+### Experiment 4a: making DCP3's leaf as fast as DCQ's
+
+- **Diagnosis (from the code and a model of the loop bounds, no runs;
+  `DCP3/tools/visits.py`):** at W = 1,280, DCP3 makes 1.38M (row group, chunk)
+  visits against DCQ's 0.99M (L = 1,280), and 1.0M of them pay a scalar head
+  and a masked tail; DCQ pays no heads. The heads come from piece
+  boundaries: 96 of the 128 pieces start at an output that isn't a multiple
+  of 4, and every chunk of such a piece inherits that alignment.
+  - A fit to the three chunked one-core points above, about 27 ns per extra visit and
+    11 ns per head, splits W = 1,280's 22 ms gap about evenly between the
+    two. It is two parameters fit to three points, so it is only a guide.
+  - Chunking off has the fewest visits but is 59 ms slower; the fit
+    explains only about 12 ms of that, so the rest is L1 misses on the wide
+    end pieces.
+  - A global chunk grid (multiples of W from output 0) would not help: the
+    model gives 49% more visits at W = 1,280 and the same heads as chunking
+    off.
+- **Hypothesis:** rounding every split point to a multiple of 8 makes every
+  piece and every chunk start aligned. This removes all heads and masked
+  tails, at the cost of less equal pieces (1.5% apart in pairs instead of
+  0.34%).
+  - W = 1,280: about 1.6% over DCQ (11 ms), from the extra visits only.
+  - Larger W cuts visits in the wide pieces (1.17M at 1,920 down to 1.09M at
+    5,120), so the best W should be above 1,280, until the c and b windows
+    overflow L1.
+  - The middle pieces (about 780 outputs wide at 128 pieces) are one chunk
+    whatever W is, so their visits stay. 256 pieces halve that width, so
+    they should give a slower leaf: the 128 against 256 comparison trades
+    balance against leaf rate.
+  - **Model predictions** (fit, aligned, 128 pieces): 0.6896 s at
+    W = 1,280, 0.6840 at 1,920, 0.6825 at 2,560, 0.6819 at 3,840, 0.6817 at
+    5,120 (DCQ 0.6790). These leave out cache effects, which should show up
+    at the larger W.
+  - **256 pieces** (model): 392–8,848 outputs wide, 2.9% apart in pairs, and
+    every middle piece narrower than any W, so about +4.7–4.9% over DCQ at
+    every W, slower than the unaligned 128-piece leaf.
+  - **Refuted if** aligned W = 1,280 is not at least 1% faster than the
+    unaligned 0.7010 s.
+- **Design:** split points rounded to the nearest multiple of 8 (clamped to
+  the range); chunks still k0 + t·W. One core, back to back with DCQ:
+  W = 1,280, 1,920, 2,560, 3,840 and 5,120, 5 reps each, idle check and gate
+  before each.
+- **Run:** barracuda, stamp 20261031_1734; idle check and gate passed before
+  every run (11 and 10); DCQ before each W; 5 reps each
+  (`results/DCP3/onecore_aligned_20261031_1734.csv`).
+- **Results:**
+
+  | W | DCQ just before (s) | aligned DCP3 (s) | GFLOP/s | against DCQ | model predicted | spread |
+  |---|---|---|---|---|---|---|
+  | 1,280 | 0.6791 | **0.6701** | **29.85** | **−1.3%** | 0.6896 (+1.6%) | 0.12% |
+  | 1,920 | 0.6789 | 0.6930 | 28.86 | +2.1% | 0.6840 (+0.7%) | 0.14% |
+  | 2,560 | 0.6788 | 0.7013 | 28.52 | +3.3% | 0.6825 (+0.5%) | 0.12% |
+  | 3,840 | 0.6790 | 0.7025 | 28.47 | +3.5% | 0.6819 (+0.4%) | 0.13% |
+  | 5,120 | 0.6788 | 0.7085 | 28.23 | +4.4% | 0.6817 (+0.4%) | 0.28% |
+
+- **Analysis:**
+  - **Supported:** aligned W = 1,280 is 4.4% faster than the unaligned
+    version (0.7010 s), well past the 1% threshold.
+  - **Better than predicted:** DCP3's leaf is now 1.3% *faster* than DCQ's
+    (84.8% of the one-core TPP, against 83.7%). DCQ pays a 7-wide masked tail
+    on every row group (each covers 1,287 outputs), and aligned DCP3 pays
+    none.
+  - **Larger W is slower, the opposite of the model:** the model has no
+    cache term. At W = 1,280 a chunk's working set is about 25 KB (5 KB of
+    `c`, plus a 1,280-float window of each of the 4 copies of `b`), inside
+    the E-core's 32 KB L1. At 1,920 it is about 37.5 KB, past it. The loss
+    from L1 misses outweighs the visits saved.
+  - **The one-thread prediction of Experiment 4 now holds:** DCP3 is within
+    2% of DCQ (1.3% faster), with W = 1,280 and aligned splits. Experiment
+    4b and the final sweep build on this version.
+- **Trace at 16 threads, aligned, W = 1,280** (idle check passed; call 2 of
+  3; `results/DCP3/diagnostic/trace_al_16.err`): 51.4 ms per call (about
+  13.2× against DCQ), the same in all 3 calls. Pieces per thread were 7–9 in
+  call 2 and exactly 8 in calls 1 and 3, with no change in the total, so the
+  uneven count isn't what sets the time. **Summed piece time is 780 ms, 16%
+  above aligned DCP3's one-core 670 ms**, the same 16% as the unaligned trace
+  on a loaded machine. The leaf itself is fast on one core and slow when
+  16 cores run it together.
+
+### Experiment 4b: false sharing at piece boundaries
+
+- **Question:** why does DCP3's piece time rise 16% at 16 threads (and about
+  9% at 2), when T3NG's leaf time didn't rise at all?
+- **Hypothesis:** neighbouring pieces share a cache line of `c`. Split points
+  are multiples of 8 floats, but a cache line is 16 floats (64 B), so
+  boundaries can fall inside a line. (Checked afterwards: the harness's
+  `malloc` puts `c` 16 B past a line, so all 127 boundaries are inside a
+  line.) Sibling pieces are created together and
+  usually run at the same time on different cores. Every row group
+  read-modify-writes the outputs at both ends of its chunk, so the boundary
+  line moves between the two cores once per row group.
+  - **Size:** a middle piece is one chunk with all 12,500 row groups. At
+    about 150 cycles per contended line transfer, 2 boundaries × 12,500 ×
+    150 cycles ≈ 0.9 ms per 5.2 ms piece, about 17%, matching the 16%.
+  - **Fix:** round each split point to the nearest m with &c[m] on a 64-byte
+    boundary, using `c`'s actual address (m ≡ 12 mod 16 here), so no two
+    pieces share a line. Model: pieces 2.25% apart in pairs, no boundary
+    inside a line, no heads; masked tails only in the first and last piece.
+  - **Side effect:** this also moves most of `c`'s 32-byte vector accesses
+    from straddling a line to starting on one, which may change the one-core
+    time. So the 16-thread summed piece time is compared with the new
+    one-core time, not with 0.670 s.
+  - **Prediction:** one-core time unchanged (0.670 s, no other core to share
+    with); summed piece time at 16 threads back to about 670–690 ms; about
+    43–44 ms per call, about 15.4–15.8× against DCQ. Pieces up to about 3%
+    apart in pairs.
+  - **Refuted if:** summed piece time at 16 threads stays above 740 ms (the
+    lines were not the cause).
+- **Run:** splits rounded to &c[m] on a 64-byte line; gate, `verify_timed`
+  and race control passed (`results/DCP3/diagnostic/gate_line_*.txt`,
+  `verify_timed_line.txt`, `race1_line_gate_{seq,1,16}.txt`). One core, back
+  to back with DCQ (barracuda, `results/DCP3/onecore_line_20261031_2112.csv`).
+  Trace at 16 threads, 3 calls, idle check first
+  (`results/DCP3/diagnostic/trace_line_16.err`).
+- **Results:**
+
+  | | multiple of 8 | line-aligned |
+  |---|---|---|
+  | one core | 0.6701 s | 0.6705 s (DCQ 0.6789, −1.2%) |
+  | 16 threads: summed piece time (calls 1–3) | 780 ms (call 2) | 743 / 735 / 738 ms |
+  | above the one-core time | +16% | **+9.6–10.9%** |
+  | piece time per thread (call 2) | 45.5–50.3 ms | 43.5–47.1 ms |
+  | pieces per thread | 7–9 | 8 each, all calls |
+  | total call (trace build) | 51.4 ms | 48.2–50.7 ms |
+  | piece spread (pairs) | 1.54% | 2.25% |
+
+- **Analysis:**
+  - **The side effect didn't appear:** the one-core time moved 0.06%,
+    inside the spread.
+  - **False sharing was real but explains only about 40% of the excess:**
+    summed piece time dropped by about 45 ms, but is still about 65 ms
+    (+10%) above one core. The prediction (670–690 ms) is not reached.
+  - **Refutation line:** 735–743 ms against 740, so it sits at the line,
+    inside call-to-call variation. Neither clearly supported nor refuted:
+    the boundaries were one cause, not the only one.
+  - **What's left is not explained.** The trace records per-thread totals
+    only, so it can't say whether some pieces (e.g. the narrow middle ones,
+    which stream all of `a` and `b`) slow down more than others, or whether
+    cores sharing an L2 cluster slow each other.
+  - About 48–51 ms per call in the trace build is about 13.4–14.1× against
+    DCQ, so Experiment 4's 15.4–15.8× prediction is unlikely to hold.
+
+### Experiment 4: results
+
+DCP3 with line-aligned splits and W = 1,280. Barracuda, idle check before
+each thread count (17, all passed), gate before each (16, all passed), 5 reps
+each, every rep in `results/DCP3/sweep_raw_20261031_2116.csv`. Speedup
+against DCQ's 0.6789 s on the same machine
+(`onecore_line_20261031_2112.csv`). Efficiency is against DCP3's own
+1-thread time.
+
+| threads | 128 pieces: s | GFLOP/s | **speedup** | efficiency | spread | 256 pieces: speedup |
+|---|---|---|---|---|---|---|
+| 1 | 0.6703 | 29.8 | 1.01 | — | 0.1% | 1.00 |
+| 2 | 0.3490 | 57.3 | 1.95 | 96% | 8.1% | 1.87 |
+| 3 | 0.2424 | 82.5 | 2.80 | 92% | 2.5% | 2.66 |
+| 4 | 0.1874 | 106.7 | 3.62 | 89% | 3.7% | 3.40 |
+| 6 | 0.1239 | 161.4 | 5.48 | 90% | 3.3% | 4.95 |
+| 8 | 0.0935 | 213.9 | 7.26 | 90% | 3.0% | 6.48 |
+| 10 | 0.0752 | 265.9 | 9.03 | 89% | 5.4% | 7.68 |
+| 12 | 0.0652 | 306.7 | 10.41 | 86% | 4.3% | 9.45 |
+| 14 | 0.0566 | 353.5 | 12.00 | 85% | 3.4% | 11.09 |
+| 16 | 0.0492 | **406.6** | **13.80** | 85% | 4.8% | 12.48 |
+
+At 16 threads: 406.6 GFLOP/s, 72.2% of the 16-core TPP (563.2). Every thread
+count is in the csv. 256 pieces has spreads of 10% or more at 2, 8, 10 and
+11 threads (largest 16.6%); 128 pieces' largest is 9.6% (15 threads).
+
+### Experiment 4: analysis
+
+| prediction | measured | |
+|---|---|---|
+| 1 thread within 2% of DCQ | 1.3% faster (after 4a) | supported |
+| 16 threads, 128 pieces: 15.4–15.8×, above T3NG | 13.80× | **refuted** |
+| a staircase, at most 12.8× at 14 threads (128 pieces) | 12.00×, no visible step | the bound holds, the step isn't visible |
+| 256 pieces smaller staircase | slower at every count | other effects dominate |
+
+- **Where the 16-thread time goes** (49.2 ms against 41.9 ms for 670.3 ms
+  / 16, from the 4b trace): setup about 1 ms (the four copies of `b`, built
+  serially); piece slowdown about 4 ms (summed piece time +10% at
+  16 threads); end-of-run imbalance about 2 ms (per-thread piece time
+  43.5–47.1 ms).
+- **The loss appears by 4 threads, then stays flat:** efficiency falls from
+  96% at 2 threads to 89% at 4, stays at about 90% to 10 threads, and then
+  drops slowly to 85% at 16. If `run_sweep.sh` binds threads compactly
+  (16–19 first, which is one E-core cluster sharing an L2), this is the
+  pattern of contention inside a cluster: it grows until the first cluster
+  is full, then each added cluster brings its own L2. This is not verified.
+- **The staircase isn't visible** because the pieces don't take equal time:
+  piece slowdown and imbalance are larger than the steps.
+- **256 pieces is slower everywhere:** 1.5% on one core (narrower middle
+  pieces mean more row-group visits, as predicted for 4a, though by less
+  than the model's 4.9%), and 6–15% from 4 threads up, more than the leaf
+  alone explains. Its reps also vary much more.
+
+### Experiment 4: conclusions
+
+- **Goal 3 is met by DCP3, output-range recursion:** 13.80× at 16 threads
+  (406.6 GFLOP/s, 72.2% of TPP), with no reduction, no `taskwait`, no copy of
+  `c`, and only the parallel region's barrier.
+  - It is 3.1× faster than the best `taskwait` version (DCP2HD2, 4.40×).
+  - It is 9% slower than the reduction (T3NG, 15.22×), which uses one copy of
+    `c` per thread.
+- **The leaf matters as much as the decomposition** (4a): the first DCP3
+  leaf was 3.2% slower than DCQ's. Aligning split points removed every scalar
+  head and masked tail, and the leaf became 1.3% faster than DCQ's. The
+  visit-count model got the direction right at small W but missed the L1
+  limit above W = 1,280.
+- **Owning disjoint outputs is not the same as owning disjoint cache lines**
+  (4b): the harness puts `c` 16 B past a line, so every split shared a line
+  with its neighbour. Aligning splits to lines cut the 16-thread piece
+  slowdown from 16% to 10%.
+- **More pieces is not better here:** 256 pieces was slower at every thread
+  count. Narrower pieces cost more in the leaf than they gain in balance.
+- **Open:**
+  - the remaining 10% piece slowdown at 16 threads; a possible cause is
+    shared L2 contention within an E-core cluster (the efficiency pattern
+    above), testable by comparing 4 threads in one cluster against 4 spread
+    across clusters;
+  - building the copies of `b` in parallel would remove about 1 ms (2%) at
+    16 threads;
+  - 256 pieces' large rep spreads are not explained.
+
+## Summary: three ways to parallelize DCQ
+
+| strategy | variant | best at 16 threads | GFLOP/s | extra memory | sync | what limits it |
+|---|---|---|---|---|---|---|
+| reduction (Goal 1) | T3NG | **15.22×** | 447.7 | one copy of `c` per thread (12.8 MB) | end of region, merge | setup, zeroing, merge, imbalance |
+| `taskwait` ordering (Goal 2) | DCP2HD2 | 4.40× | 129.6 | none | 3 stages at every split | the span (1,334 leaves; W/S = 4.58) |
+| output ranges (Goal 3) | DCP3 | 13.80× | 406.6 | no copy of `c` (4 padded copies of `b`, 1.6 MB, whatever the thread count) | end of region only | piece slowdown at 16 threads, setup, imbalance |
+
+- Dividing the inputs makes subproblems overlap in `c`. Either each thread
+  pays for its own copy (Goal 1), or the overlapping subproblems wait for
+  each other, and the span caps the speedup (Goal 2).
+- Dividing the output removes the overlap entirely (Goal 3). It needs a
+  different leaf, aligned to SIMD width and to cache lines, and it gets
+  within 9% of the reduction with no extra memory.

@@ -97,22 +97,25 @@ static void tr_tw_end(void) {
 
 // HHDIRECT=1 (DCP2HD): in stage 1, only LL is a task; HH runs directly in
 // the current task, then taskwait. Default 0 is DCP2 as first built.
-// With HHDIRECT=1, RACE=1 drops the taskwait (LH can start while LL may
-// still run); RACE=2 is not defined for it.
+// HHDIRECT=2 (DCP2HD2): as 1, but HH is an undeferred task (task if(0)):
+// the current thread runs it at once, but its taskwaits wait only for
+// HH's own children, not for the parent's LL.
+// With HHDIRECT=1 or 2, RACE=1 drops the taskwait (LH can start while LL
+// may still run); RACE=2 is not defined for them.
 #ifndef HHDIRECT
 #define HHDIRECT 0
 #endif
-#if HHDIRECT != 0 && HHDIRECT != 1
-#error "HHDIRECT must be 0 or 1"
+#if HHDIRECT != 0 && HHDIRECT != 1 && HHDIRECT != 2
+#error "HHDIRECT must be 0, 1 or 2"
 #endif
 #if HHDIRECT && defined(RACE) && RACE != 1
-#error "HHDIRECT=1 has only the RACE=1 control"
+#error "HHDIRECT=1 and 2 have only the RACE=1 control"
 #endif
 
 // Only non-default switches are listed, so the default build keeps the
 // string earlier DCP2 rows were recorded with.
 #if HHDIRECT
-#define BP_HHD ";hhdirect=1"
+#define BP_HHD ";hhdirect=" STR(HHDIRECT)
 #else
 #define BP_HHD ""
 #endif
@@ -367,8 +370,11 @@ static void dc_par(const dc_ctx_t *restrict x, int i0, int na, int j0, int nb) {
     // Stage 1: LL and HH write disjoint outputs.
 #pragma omp task
     dc_par(x, aL, naL, bL, nbL);
-#if HHDIRECT
+#if HHDIRECT == 1
     dc_par(x, aH, naH, bH, nbH);   // HH runs directly in the current task
+#elif HHDIRECT == 2
+#pragma omp task if(0)
+    dc_par(x, aH, naH, bH, nbH);   // HH runs at once, as its own task
 #else
 #pragma omp task
     dc_par(x, aH, naH, bH, nbH);
