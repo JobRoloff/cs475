@@ -1,0 +1,165 @@
+<html>
+
+<title>CS 475: Lab 6: Profiling CUDA with Nsight Systems</title>
+
+<body>
+
+<center><h1>CS475 Lab 6: Profiling CUDA Programs with Nsight Systems</h1></center>
+
+<h3>Introduction</h3>
+
+The purpose of this exercise is for you to learn how to use NVIDIA Nsight
+Systems (<tt>nsys</tt>) to see where a CUDA program spends its time: running
+kernels on the GPU, copying data between CPU and GPU memory, waiting in CUDA
+calls, or working on the CPU.
+<p>
+You are given a program that multiplies two N x N matrices of floats,
+C = A * B, with a simple kernel in which every thread reads a whole row of A
+and a whole column of B from global memory. You will write a tiled version
+of the kernel that uses shared memory, profile both programs with
+<tt>nsys</tt>, and answer the questions at the end of this page.
+
+<p>
+Resources that may be useful for this assignment include:
+<ul>
+
+ <li>	<a href="https://archive.docs.nvidia.com/nsight-systems/2024.6/UserGuide/index.html">
+	The Nsight Systems 2024.6 User Guide</a>, the version installed on the lab machines.
+	See the <a href="https://archive.docs.nvidia.com/nsight-systems/2024.6/UserGuide/index.html#cli-profiling">
+	command line profiling</a> section.
+
+ <li>	<a href="https://nvidia.github.io/NVTX/"> NVTX documentation </a>
+
+ <li>	<a href="https://www.gnu.org/software/make/manual/make.html">
+  Documentation for gnu make </a>
+
+ <li> The <a href="https://docs.nvidia.com/cuda/archive/12.8.0/cuda-c-programming-guide/index.html#shared-memory">
+Shared Memory</a> section of the NVIDIA CUDA C++ Programming Guide for CUDA 12.8,
+which works through a matrix multiply with and without shared memory.
+
+</ul>
+<h3>Compiling and Running a CUDA Program</h3>
+<p>
+
+You will need to use a linux machine with an NVIDIA
+graphics card. In the CSU 325 lab, the machines have such a graphics card.
+These are machines named after fish (anchovy .. ), see <a
+href="https://www.cs.colostate.edu/~info/machines"> these machines</a> and grep 325.
+Each of these machines has an NVIDIA RTX 4000 Ada Generation GPU
+(compute capability 8.9, 48 streaming multiprocessors, 20 GB of memory).
+<p>
+*** Exception: Do not use wahoo or brill for your CUDA experiments (brill currently has no working GPU).***
+<p>
+The GPUs are shared. Before you time or profile anything, run <tt>nvidia-smi</tt> and use a
+machine whose GPU shows 0% utilization and no running processes; another
+user's job on the same GPU will distort your times.
+<p>
+
+<p>
+Load the CUDA module (CUDA 12.8, the default version). This also gives you <tt>nsys</tt>:
+<br>
+<tt>module load cuda/12.8</tt>
+
+<p>
+Download and untar the  <a href="CUDAL6.tar">CUDAL6.tar</a> file.
+To compile a CUDA program, use the CUDA compiler nvcc. The provided Makefile
+builds <tt>sgemm00</tt>. Add rules to it to build <tt>sgemm01</tt> from your
+<tt>sgemmKernel01.cu</tt>, the same way <tt>sgemm00</tt> is built from
+<tt>sgemmKernel00.cu</tt>.
+<p>
+
+<h3>Matrix multiply: tiling with shared memory</h3>
+<p>
+<tt>sgemm.cu</tt> multiplies two N x N matrices. It launches (N/16) x (N/16)
+thread blocks of 16 x 16 threads (<tt>BLOCK_SIZE</tt> in <tt>sgemmKernel.h</tt>),
+and each thread computes one element of C. In the provided kernel,
+<tt>sgemmKernel00.cu</tt>, each thread reads a whole row of A and a whole
+column of B from global memory, so every element of A and B is read from
+global memory N times.
+
+<p>
+For this lab you must create a new kernel called <tt>sgemmKernel01.cu</tt>, with
+the same <tt>MatMulKernel</tt> function, that uses tiling. The thread block works
+through A and B one BLOCK_SIZE x BLOCK_SIZE tile at a time. In each step, every
+thread loads one element of a tile of A and one element of a tile of B into
+shared memory, the block waits with <tt>__syncthreads()</tt>, and then every
+thread adds up its part of the product from shared memory. Each element loaded
+from global memory is then used BLOCK_SIZE times. N must be a multiple of
+BLOCK_SIZE, so you do not need to handle partial tiles. Do not change
+<tt>sgemm.cu</tt> or <tt>sgemmKernel.h</tt>.
+
+<p>
+<tt>sgemm.cu</tt> checks a sample of C against a computation on the CPU and
+prints <tt>Test PASSED</tt> or <tt>Test FAILED</tt>. Make sure your kernel passes.
+
+<p> Here is a set of files provided in CUDAL6.tar:
+<ul>
+  <li>  Makefile
+  <li>  sgemm.cu
+  <li>  sgemmKernel.h
+  <li>  sgemmKernel00.cu
+  <li>  timer.h
+  <li>  timer.cu
+</ul>
+
+<p>
+Run both programs with N = 4096 (<tt>./sgemm00 4096</tt> and
+<tt>./sgemm01 4096</tt>) and note the time each one prints.
+
+<h3>Profiling with Nsight Systems</h3>
+<p>
+<tt>nsys</tt> runs your program and records a timeline of what it does on
+the CPU and the GPU. Profile each program:
+<pre>
+nsys profile -o sgemm00 ./sgemm00 4096
+nsys profile -o sgemm01 ./sgemm01 4096
+</pre>
+Each command runs the program and writes a report file
+(<tt>sgemm00.nsys-rep</tt>, <tt>sgemm01.nsys-rep</tt>). To profile again
+into an existing report file, add <tt>--force-overwrite true</tt>.
+
+<p>
+Print summary tables from a report with <tt>nsys stats</tt>:
+<pre>
+nsys stats --report nvtx_sum,cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,cuda_gpu_mem_size_sum sgemm00.nsys-rep
+</pre>
+All times in these tables are in nanoseconds.
+<ul>
+  <li> <tt>nvtx_sum</tt>: the phases of the program. <tt>sgemm.cu</tt> marks its
+       phases (initializing A and B, copying them to the GPU, the warm-up and
+       timed kernels, copying C back, and checking C) with NVTX ranges,
+       using <tt>nvtxRangePush</tt> and <tt>nvtxRangePop</tt>.
+  <li> <tt>cuda_api_sum</tt>: time the CPU spends in each CUDA call.
+  <li> <tt>cuda_gpu_kern_sum</tt>: time each kernel runs on the GPU.
+  <li> <tt>cuda_gpu_mem_time_sum</tt> and <tt>cuda_gpu_mem_size_sum</tt>: time taken
+       and amount of data for the copies between CPU and GPU memory.
+</ul>
+
+<p>
+If you are working at a lab machine, you can also open a report in the Nsight
+Systems GUI with <tt>nsys-ui sgemm00.nsys-rep</tt> and look at the timeline: the
+CUDA HW row shows when kernels and copies run on the GPU, and the NVTX row shows
+the phases of the program. The GUI is optional; you can answer the questions
+from the <tt>nsys stats</tt> tables.
+
+<h3>Questions</h3>
+<ol>
+  <li> From <tt>cuda_gpu_kern_sum</tt>, what is the average time of
+       <tt>MatMulKernel</tt> in sgemm00 and in sgemm01, and what is the speedup
+       of your tiled kernel? Why are there two instances of the kernel, and do
+       the times agree with the times the programs print?
+  <li> From <tt>cuda_gpu_mem_time_sum</tt> and <tt>cuda_gpu_mem_size_sum</tt>, how
+       much data is copied to the GPU and back, how long do the copies take, and
+       what transfer rate (GB/s) do they reach? How does the total copy time
+       compare with one run of your tiled kernel?
+  <li> In <tt>cuda_api_sum</tt>, <tt>cudaLaunchKernel</tt> takes only microseconds,
+       but <tt>cudaDeviceSynchronize</tt> takes about as long as the kernel. Why?
+       One of the three <tt>cudaMalloc</tt> calls is also much slower than the
+       other two. Which one, and why? (Hint: it is the first CUDA call in the program.)
+  <li> From <tt>nvtx_sum</tt>, which phase of sgemm01 takes the most time, and does
+       it run on the CPU or the GPU? If you made your kernel twice as fast, about
+       how much faster would the whole program run?
+</ol>
+
+<!-- End of contents -->
+
