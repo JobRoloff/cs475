@@ -1,0 +1,116 @@
+<html>
+
+<title>CS 475: Lab 7: Introduction to GPU and CUDA</title>
+
+<body>
+
+<center><h1>CS475 Lab 7: Introduction to GPUs and CUDA: Coalescing</h1></center>
+
+<h3>Introduction</h3>
+
+The purpose of this exercise is for you to learn how to write programs
+using the CUDA programming interface, how to run such programs using an
+NVIDIA graphics processor, and how to think about the factors that
+govern the performance of programs running within the CUDA environment.
+<p>
+In this, you will modify a CUDA kernel and empirically test and compare
+its performance to the given code.  The given program that performs vector
+addition. The provided program does not coalesce memory accesses. You will modify it
+to coalesce memory access.
+
+<p>
+Resources that may be useful for this assignment include:
+<ul>
+
+ <li>	<a href="https://developer.nvidia.com/cuda"> 	The
+	NVIDIA CUDA Developer web site </a>
+
+ <li>	<a href="https://docs.nvidia.com/cuda/archive/12.8.0/"> The
+        documentation for CUDA 12.8, the version installed on the lab machines </a>
+
+
+ <li>	<a href="https://www.gnu.org/software/make/manual/make.html">
+  Documentation for gnu make </a>
+
+
+ <li> Most importantly, check out the
+<a href="https://docs.nvidia.com/cuda/archive/12.8.0/cuda-c-programming-guide/index.html">
+NVIDIA CUDA C++ Programming Guide</a> for CUDA 12.8.
+The <a href="https://docs.nvidia.com/cuda/archive/12.8.0/cuda-c-best-practices-guide/index.html#coalesced-access-to-global-memory">
+Coalesced Access to Global Memory</a> section of the CUDA C++ Best Practices Guide
+covers the topic of this lab.
+
+  <li> <a href="https://stackoverflow.com/questions/2392250/understanding-cuda-grid-dimensions-block-dimensions-and-threads-organization-s">Description of CUDA grids and blocks</a>
+
+</ul>
+<h3>Compiling and Running a CUDA Program</h3>
+<p>
+
+You will need to use a linux machine with an NVIDIA
+graphics card. In the CSU 325 lab, the machines have such a graphics card.
+These are machines named after fish (anchovy .. ), see <a
+href="https://www.cs.colostate.edu/~info/machines"> these machines</a> and grep 325.
+Each of these machines has an NVIDIA RTX 4000 Ada Generation GPU
+(compute capability 8.9, 48 streaming multiprocessors, 20 GB of memory).
+<p>
+*** Exception: Do not use wahoo or brill for your CUDA experiments (brill currently has no working GPU).***
+<p>
+The GPUs are shared. Before you time anything, run <tt>nvidia-smi</tt> and use a
+machine whose GPU shows 0% utilization and no running processes; another
+user's job on the same GPU will distort your times.
+<p>
+
+<p>
+You'll need to take a few additional steps in order to use CUDA on the department
+machines.
+Minimally, you need to load the CUDA module (CUDA 12.8, the default version):
+<br>
+<tt>module load cuda/12.8</tt>
+
+<p>
+Download and untar the  <a href="CUDAL7.tar">CUDAL7.tar</a> file.
+To compile a CUDA program, use the CUDA compiler nvcc. You should use
+the provided Makefile as a starting point for this lab and for your
+CUDA assignments. The Makefile compiles for the RTX 4000 Ada GPUs
+(<tt>--gpu-architecture=sm_89</tt>) and uses the system gcc (11.5) as the host compiler.
+<p>
+
+<h3>Vector add: coalescing memory accesses</h3>
+<p>
+As discussed in class, vecadd is a micro benchmark to determine the
+effectiveness of coalescing. You are provided with a non-coalescing version,
+and it is your job to create a coalescing version, and to measure the
+difference in performance of the two codes. For this lab you must create a
+new kernel called vecaddKernel01.cu which implements the coalesced version
+of the vector addition.
+
+<p>
+In order to implement coalescing you need to change what part of the computation each
+thread is doing. In the base version each thread is computing N values in which all N
+values are consecutive in the array. Using coalescing we can improve performance by allowing
+each thread to compute a consecutive element in the array then index by number of threads.
+You must change the code to allow for this different method of computing the result.
+
+<p> Here is a set of files provided in CUDAL7.tar for Vecadd:
+<ul>
+  <li>  Makefile
+  <li>  vecadd.cu
+  <li>  vecaddKernel.h
+  <li>  vecaddKernel00.cu
+  <li>  timer.h
+  <li>  timer.cu
+</ul>
+
+<p>
+Compile and run the provided program vecadd00 and collect data on
+the time the program takes with 2,000 values per thread
+(<tt>./vecadd00 2000</tt>). vecadd.cu launches 576 blocks of 128 threads,
+12 blocks on each of the GPU's 48 streaming multiprocessors, so the vectors
+have 576 &times; 128 &times; 2,000 = 147,456,000 elements.
+
+
+Test your new program and compare the time it takes to perform the same
+work performed by the original.
+
+<!-- End of contents -->
+
