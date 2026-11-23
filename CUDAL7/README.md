@@ -54,6 +54,8 @@ Time: 0.005650 (sec), GFlopsS: 26.098206, GBytesS: 313.178474
 Using memory coalescing in a simple vector addition method improves performance by roughly 3.9x (reducing runtime from 0.022017 s to 0.005650 s and increasing effective bandwidth from ~80.4 GB/s to ~313.2 GB/s).
 
 
-## Questions
+Theese results were made possible through using memory coalesecing.
 
-- Why is everything improving by the same factor of 3.9 times?
+Without coalesced code, each thread stepped through 2,000 consecutive elements using pre-inc. What this means is threads within a warp accessed addressses spaced 2,000 floats (about 8kb) apart on each pass. This fragments the global memory access into more memory transactions and underutilized memory bandwidth.
+
+In the coalesced code version, Threads within a warp accessed adjacent elements and stepped by the block dimension. This groups warp memory access into a more compact form.
