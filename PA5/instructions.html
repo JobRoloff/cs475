@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assignment 5 - CUDA First Steps</title>
+<style>
+  /* Standalone version of the old CS Roo course template look
+     (bootstrap base + site/styles.css), no external files needed. */
+  body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #333;
+    font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.42857;
+    -webkit-text-size-adjust: 100%;
+  }
+  #page {
+    border: thick solid #cc9900;
+    margin: 2px;
+    background-color: #fff;
+  }
+  #banner {
+    text-align: center;
+    padding: 12px 8px;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #000;
+  }
+  span.course_title { font-weight: 700; font-size: 150%; }
+  span.course_subtitle { font-size: 125%; }
+  span.csdept { font-size: 125%; font-style: italic; }
+  span.csdept a { color: #000; text-decoration: none; }
+  #bar { background-color: #030; height: 8px; }
+  #contents { padding: 8px; }
+  .indented { margin-left: 16px; margin-right: 16px; }
+  h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 20px;
+    margin-bottom: 10px;
+  }
+  p { margin: 0 0 10px; }
+  ul, ol { margin-top: 0; margin-bottom: 10px; }
+  a { color: #337ab7; text-decoration: none; }
+  a:hover { color: #23527c; text-decoration: underline; }
+  pre {
+    display: block;
+    padding: 9.5px;
+    margin: 0 0 10px;
+    font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.42857;
+    color: #333;
+    background-color: #f5f5f5;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow-x: auto;
+    word-wrap: normal;
+    white-space: pre;
+  }
+  #footer {
+    background-color: #030;
+    color: #fff;
+    font-size: 85%;
+    text-align: center;
+    padding: 8px 8px 6px;
+  }
+  @media (max-width: 768px) {
+    #page { border: none; margin: 0; }
+    .indented { margin-left: 8px; margin-right: 8px; }
+  }
+</style>
+</head>
+<body>
+<div id="page">
+
+<div id="banner">
+  <span class="course_title">CS 475/575: Parallel Programming/Processing</span><br>
+  <span class="csdept"><a href="http://www.cs.colostate.edu">Computer Science Department</a></span><br>
+  <span class="course_subtitle">Assignment 5 - CUDA First Steps</span>
+</div>
+<div id="bar"></div>
+
+<div id="contents">
+   <div class="indented">
+
+<h3>Introduction</h3>
+
+The purpose of this exercise is for you to learn how to write programs
+using the CUDA programming interface, how to run such programs using an
+NVIDIA graphics processor (GP GPU general purpose Graphics Processing Unit),
+and how to think about the factors that
+govern the performance of programs running within the CUDA environment.
+<p>
+<h3>Compiling and Running a CUDA Program</h3>
+<p>
+See Lab 5 for information on compiling and running CUDA Programs. Run all experiments on the fish machines.
+*** Do not use wahoo for your CUDA experiments. ***
+<p>
+For this assignment, you will modify two provided CUDA kernels and
+empirically test and analyze their performance. 
+<p>
+Download PA5.tar. This contains a general Makefile,
+starter and timing files for your exercises.
+
+<h3>Vector MAX: coalescing memory accesses</h3>
+<p>
+
+The provided kernel is part of a program that performs vector MAX reduction.
+Notice that the MAX operator is commutative, i.e., MAX(a,b) = MAX(b,a), and
+associative, i.e., MAX(a,MAX(b,c)) = MAX(MAX(a,b),c).  This means that you can
+execute MAXs in any order, so you can apply the coalescing thread
+transformation you experimented with in Lab 5.  In the provided
+kernel each thread computes one maximum of a contiguous partition of the input
+array and writes it to global memory.  The host mem copies the result back,
+and computes the max of all maxes.
+<p>
+  
+Given a 1D grid of 320 threadblocks and a 1D threadblock of 128 threads, and a
+problem size n = 1,280,000,000, each thread computes the maximum of 31,250
+elements. The input array is of size n, whereas the result array is of size
+n/31,250, in this case 320*128= 40960.
+
+
+<p>
+In your modified kernel each thread will read, in a coalescing fashion,
+n / (320*128) interleaved global array elements. In the case of n=1,280,000,000,
+each thread reads again 31,250 elements. Leave the grid and threadblock dims
+the same. Again, each thread computes one maximum, of a now interleaved
+partition. The intermediate maxes computed by the GPU threads will be
+different from the ones computed by the original kernel. However, the max of
+maxes computed by the host will be the same as the
+original max of maxes.
+
+<p>
+Measure and report the difference in performance of the two codes.
+
+<p> Additional files, relevant to this part of the PA are:
+<ul>
+  <li>  vecMax.cu
+  <li>  vecMaxKernel.h
+  <li>  vecMaxKernel00.cu
+</ul>
+
+<p>
+You will write a new device kernel, called vecMaxKernel01.cu, to compute
+vector maxima using coalesced memory reads. Change the
+makefile to compile a program called vecMax01 using your kernel rather
+than the provided kernel.
+
+<h3>Shared / shared CUDA Matrix Multiply</h3>
+The first exercise made you aware of coalescing and its performance
+enhancement.
+The main exercise performs matrix multiplication.
+<p>
+The tar file above provides the following files for Matmult:
+<ul>
+  <li>  matmult.cu
+  <li>  matmultKernel.h
+  <li>  matmultKernel00.cu
+</ul>
+
+<p>
+Running make produces a binary called matmult00 and it is invoked like this,
+<pre>
+$ ./matmult00 X
+</pre>
+</p>
+<p>
+where X controls the problem size (i.e., the matrices are NxN matrices of size N=X*FOOTPRINT_SIZE). FOOTPRINT_SIZE is defined in matmultKernel.h. This is done to avoid nasty padding issues.
+If you run it with X=200 for example, then you see this,
+<pre>
+$ ./matmult00 200
+Data dimensions: 3200x3200
+Grid Dimensions: 200x200
+Block Dimensions: 16x16
+Footprint Dimensions: 16x16
+Time: 0.028415 (sec), nFlops: 65536000000, GFlopsS: 2306.390339
+</pre>
+The "Grid Dimensions" represent the number of CUDA thread blocks being used and matches the value passed as X. 
+The "Block Dimensions" represent the size of each CUDA thread block (i.e., the number of threads per block).  This is controlled by the compile time constant BLOCK_SIZE in matmultKernel.h.
+The "Footprint dimensions" represent the size of the patch of C computed by each CUDA block. This is controlled by FOOTPRINT_SIZE.
+In the provided matmult00 implementation, the FOOTPRINT_SIZE and BLOCK_SIZE are the same which means that each thread updates a single element of C.
+</p>
+
+<p>
+Your task is to modify the kernel, (copy matmultKernel00.cu into matmultKernel01.cu), and produce a new binary matmult01 where each thread updates more than one element of C, based on the values of FOOTPRINT_SIZE and BLOCK_SIZE. For example, in order to have each thread update 4 elements of its block's patch, then you would set FOOTPRINT_SIZE to twice that of BLOCK_SIZE.
+
+Your submitted code should have each thread compute 4 values in the resulting C matrix.
+</p>
+
+<p>
+Here is an example of running the solution code's matmult01,
+<pre>
+$ ./matmult01 100
+Data dimensions: 3200x3200 
+Grid Dimensions: 100x100 
+Block Dimensions: 16x16 
+Footprint Dimensions: 32x32 
+Time: 0.014528 (sec), nFlops: 65536000000, GFlopsS: 4511.002001
+</pre>
+
+Notice that parameter 100 now creates a 100*32 = 3200 square matrix problem
+(the same size as matmult00 200 above),
+because the footprint has become 32x32. Also notice a nice speedup. <br>
+<br>
+
+
+</p>
+
+<p>
+Investigate how each of the following factors influences
+performance of matrix multiplication in CUDA:
+<ul>
+  <li> The size of matrices to be multiplied
+  <li> The size of the block computed by each thread block
+</ul>
+
+You should time the initial code provided and your modifed version using square matrices of each
+of the following sizes: 3200, 6400, 12800.
+
+The easiest way to update the footprint size for matmult01 is to add the flag
+-DFOOTPRINT_SIZE=32 to the lines in your makefile where you compile matmult01.
+
+<h3>Report</h3>
+Use any GPU in the CS325 lab.
+<ol>
+<li>Collect and compare the time vecMax00 and vecMax01 take with G = 320
+thread blocks, B = 128 threads per block, and problem
+size n = 1,280,000,000 (i.e., ./vecMax00 320 128 1280000000).
+<li>Collect and compare the time matmult00 and matmult01 take for square
+matrices of size:  3200x3200, 6400x6400, 12800x12800.
+<li>For matmult00 and matmult01, investigate how each of the following factors
+influences performance:
+<ul>
+  <li> The size of matrices to be multiplied
+  <li> The size of the block computed by each thread block
+</ul>
+<li> Can you formulate any rules of thumb for obtaining good performance when
+using CUDA? 
+</ol>
+
+<h3>Submission</h3>
+Submit a PA5.tar file on Canvas, containing:<br>
+<ul>
+  <li>  report.pdf
+  <li>  Makefile
+  <li>  matmult.cu
+  <li>  matmultKernel.h
+  <li>  matmultKernel01.cu
+  <li>  vecMax.cu
+  <li>  vecMaxKernel.h
+  <li>  vecMaxKernel01.cu
+</ul>
+Use "make tar" to make the tar file. <br>
+See the Canvas rubric for this assignment for how it will be graded.
+</div>
+</div>
+
+<div id="footer">
+  Colorado State University, Fort Collins, CO 80523 USA
+</div>
+
+</div>
+</body>
+</html>
